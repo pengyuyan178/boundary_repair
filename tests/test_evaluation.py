@@ -49,6 +49,26 @@ class EvaluationTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationError,'fixture'):
             OfficialDockerEvaluator().evaluate(self.request)
 
+    def test_mapping_is_converted_losslessly_only_for_harness(self):
+        raw = {'demo__ui-1': {'instance_id': 'demo__ui-1', 'patch': 'synthetic-gold',
+                            'test_patch': 'synthetic-test', 'FAIL_TO_PASS': ['demo-test'],
+                            'image_assets': {'problem_statement': ['https://example.invalid/image.png']}}}
+        write_json(self.dataset, raw)
+        before = file_sha256(self.dataset)
+        manifest = json.loads((self.batch/'manifest.json').read_text())
+        manifest['dataset_sha256'] = before
+        write_json(self.batch/'manifest.json', manifest)
+        with patch('boundary_repair.experiments.evaluation.run_process', side_effect=self.fake_process):
+            OfficialDockerEvaluator().evaluate(self.request)
+        root = self.batch/'evaluation/test-grade'
+        self.assertEqual(json.loads((root/'dataset.json').read_text()), list(raw.values()))
+        self.assertEqual(file_sha256(self.dataset), before)
+        saved = json.loads((root/'request.json').read_text())
+        args = saved['arguments']
+        self.assertEqual(args[args.index('--dataset_name')+1], str(root/'dataset.json'))
+        self.assertEqual(saved['dataset_sha256'], before)
+        self.assertEqual(saved['harness_dataset_sha256'], file_sha256(root/'dataset.json'))
+
     def test_harness_revision_mismatch_stops_before_run(self):
         from dataclasses import replace
         with patch('boundary_repair.experiments.evaluation.run_process',side_effect=self.fake_process):

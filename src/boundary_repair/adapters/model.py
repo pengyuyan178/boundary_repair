@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from boundary_repair.config import ExperimentConfig
+from boundary_repair.adapters.storage import safe_component, write_json
 from boundary_repair.domain.errors import ConfigurationError, ExternalServiceError, ValidationError
 from boundary_repair.domain.runtime import RunContext
 from boundary_repair.domain.task import IssueAsset
@@ -153,6 +154,7 @@ class FrozenModelAdapter:
         asset_hashes: list[str] = []
         for asset in request.assets:
             uri, digest = prepare_asset(asset, self.config, context)
+            content.append({'type': 'text', 'text': 'Image asset source_id: ' + asset.source_id})
             content.append({'type': 'image_url', 'image_url': {'url': uri}})
             asset_hashes.append(digest)
         limit = context.budget.begin_model_call(request.max_output_tokens)
@@ -160,6 +162,16 @@ class FrozenModelAdapter:
             {'role': 'system', 'content': request.system}, {'role': 'user', 'content': content}],
             'max_completion_tokens': limit, 'temperature': context.policy.temperature,
             'response_format': {'type': 'json_object'}, 'n': 1, 'stream': False, 'seed': context.seed}
+        trajectory = (self.config.results_root / safe_component(context.run_id) / 'cases' /
+                      safe_component(context.instance_id) / 'trajectory')
+        call_name = f'{context.budget.model_calls:03d}_{safe_component(request.schema_name)}'
+        write_json(trajectory / (call_name + '.request.json'), {
+            'schema_name': request.schema_name, 'system': request.system, 'prompt': request.prompt,
+            'model': body['model'], 'seed': body['seed'], 'temperature': body['temperature'],
+            'max_completion_tokens': limit, 'response_format': body['response_format'],
+            'assets': [{'source_id': asset.source_id, 'uri': asset.uri, 'sha256': digest}
+                       for asset, digest in zip(request.assets, asset_hashes)],
+        })
         connection_class = http.client.HTTPSConnection if scheme == 'https' else http.client.HTTPConnection
         connection = connection_class(host, port=port, timeout=min(self.config.integration.http_timeout, context.budget.remaining_seconds()))
         try:
@@ -174,6 +186,15 @@ class FrozenModelAdapter:
                 context.budget.record_output_tokens(limit)
                 raise ExternalServiceError('model_response_size_limit')
             data = strict_json(raw.decode('utf-8'), maximum=4000000)
+            choices = data.get('choices')
+            write_json(trajectory / (call_name + '.response.json'), {
+                'request_id': data.get('id'), 'model': data.get('model'), 'usage': data.get('usage'),
+                'response_sha256': hashlib.sha256(raw).hexdigest(),
+                'choices': [{'finish_reason': choice.get('finish_reason'),
+                             'text': choice.get('message', {}).get('content')}
+                            for choice in choices if isinstance(choice, dict)]
+                           if isinstance(choices, list) else choices,
+            })
             usage = data.get('usage', {}).get('completion_tokens') if isinstance(data.get('usage'), dict) else None
             if type(usage) is not int or usage < 0:
                 context.budget.record_output_tokens(limit)

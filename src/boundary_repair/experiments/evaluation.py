@@ -149,10 +149,19 @@ class OfficialDockerEvaluator:
         evaluation_id = safe_component(request.evaluation_id)
         root = request.batch_directory / 'evaluation' / evaluation_id
         root.mkdir(parents=True, exist_ok=False)
+        harness_dataset = request.dataset
+        if request.dataset.suffix.lower() == '.json':
+            raw_dataset = json.loads(request.dataset.read_text(encoding='utf-8-sig'))
+            if isinstance(raw_dataset, dict):
+                if any(not isinstance(row, dict) or row.get('instance_id') != key
+                       for key, row in raw_dataset.items()):
+                    raise ValidationError('dataset_mapping_id_mismatch')
+                harness_dataset = root / 'dataset.json'
+                write_json(harness_dataset, list(raw_dataset.values()))
         prediction_hash = file_sha256(request.predictions)
         # Unique cwd + evaluation id + content hash prevent accidental cache reuse.
         run_id = safe_component(evaluation_id[:96] + '-' + prediction_hash[:16])
-        arguments = [python, '-m', 'swebench.harness.run_evaluation', '--dataset_name', str(request.dataset),
+        arguments = [python, '-m', 'swebench.harness.run_evaluation', '--dataset_name', str(harness_dataset),
                      '--predictions_path', str(request.predictions), '--run_id', run_id,
                      '--max_workers', str(workers), '--timeout', str(timeout)]
         for key in ('namespace', 'instance_image_tag'):
@@ -161,7 +170,8 @@ class OfficialDockerEvaluator:
                     raise ConfigurationError('unsupported_harness_image_option')
                 arguments.extend(['--' + key, options[key]])
         write_json(root / 'request.json', {'arguments': arguments, 'prediction_sha256': prediction_hash,
-                   'dataset_sha256': file_sha256(request.dataset), 'installed_harness': installed,
+                   'dataset_sha256': file_sha256(request.dataset),
+                   'harness_dataset_sha256': file_sha256(harness_dataset), 'installed_harness': installed,
                    'image_bindings': image_bindings, 'runtime_image_race_protection': False})
         # Bounded outer deadline accommodates per-instance execution and image setup. No retries.
         result = run_process(arguments, cwd=root, timeout=(timeout + 600) * len(ids) + 300,

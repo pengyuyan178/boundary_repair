@@ -16,12 +16,36 @@ from boundary_repair.algorithms.synthesis import ScopeSynthesis
 from boundary_repair.domain.errors import EvidenceConflict, ValidationError
 from boundary_repair.domain.specification import Coverage, InterpretationSpace, SolverStatus, Term
 from boundary_repair.domain.repair import ExpressivityVerdict
-from boundary_repair.kernel.evidence import parse_evidence
+from boundary_repair.kernel.evidence import EVIDENCE_SCHEMA, parse_evidence
+from boundary_repair.domain.task import IssueAsset
 from boundary_repair.kernel.terms import literal, symbol
 from boundary_repair.kernel.files import source_slice
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_prompt_example_has_valid_claim_references(self):
+        example_task = replace(task(), problem_statement=EVIDENCE_SCHEMA['sources'][0]['locator'])
+        result = parse_evidence(json.dumps(EVIDENCE_SCHEMA), example_task, ())
+        self.assertEqual(len(result.claims), 1)
+
+    def test_all_three_source_formats_and_strict_image_anchors(self):
+        data = evidence()
+        data['sources'].extend([
+            {'source_id': 'visual', 'kind': 'issue_image',
+             'locator': 'issue-image-0#bbox=0.1,0.2,0.8,0.9'},
+            {'source_id': 'code', 'kind': 'base_code', 'locator': 'ui.js#quote=return active;'},
+        ])
+        image_task = replace(task(), assets=(IssueAsset('https://example.invalid/image.png', 'issue-image-0'),))
+        code = ({'path': 'ui.js', 'source': 'function visible(active) { return active; }'},)
+        result = parse_evidence(json.dumps(data), image_task, code)
+        self.assertEqual(len(result.sources), 6)
+        for locator in ('invented#bbox=0,0,1,1', 'issue-image-0#bbox=0,0,100,100',
+                        'issue-image-0#bbox=0.8,0.2,0.1,0.9', 'issue-image-0'):
+            with self.subTest(locator=locator):
+                data['sources'][-2]['locator'] = locator
+                with self.assertRaisesRegex(ValidationError, 'invalid_image_anchor'):
+                    parse_evidence(json.dumps(data), image_task, code)
+
     def test_nonexistent_quote_rejected(self):
         data = evidence()
         data['sources'][0]['locator'] = 'not present anywhere'

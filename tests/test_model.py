@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from helpers import config, context
 from boundary_repair.adapters.model import FrozenModelAdapter, chat_endpoint, read_model_environment, _public_address
 from boundary_repair.domain.errors import ConfigurationError, ExternalServiceError, ValidationError
+from boundary_repair.domain.task import IssueAsset
+from boundary_repair.kernel.codec import strict_json
 from boundary_repair.ports import ModelRequest
 
 
@@ -65,6 +67,27 @@ class ModelHTTPTests(unittest.TestCase):
             FrozenModelAdapter(self.config).complete(self.request, ctx)
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(ctx.budget.model_calls, 1)
+
+    def test_raw_content_is_saved_before_domain_json_validation(self):
+        self.payload['choices'][0]['message']['content'] = '{invalid-json'
+        ctx = context()
+        result = FrozenModelAdapter(self.config).complete(self.request, ctx)
+        with self.assertRaises(ValidationError):
+            strict_json(result.text)
+        trajectory = self.config.results_root / ctx.run_id / 'cases' / ctx.instance_id / 'trajectory'
+        saved = json.loads((trajectory / '001_test.v1.response.json').read_text())
+        self.assertEqual(saved['choices'][0]['text'], '{invalid-json')
+        self.assertEqual(saved['usage']['completion_tokens'], 7)
+        self.assertTrue((trajectory / '001_test.v1.request.json').is_file())
+        self.assertNotIn('local-dummy', ''.join(p.read_text() for p in trajectory.iterdir()))
+
+    def test_each_image_is_preceded_by_its_exact_asset_id(self):
+        request = replace(self.request, assets=(IssueAsset('https://example.invalid/a.png', 'issue-image-3'),))
+        with patch('boundary_repair.adapters.model.prepare_asset', return_value=('data:image/png;base64,AA==', 'a'*64)):
+            FrozenModelAdapter(self.config).complete(request, context())
+        content = self.calls[0][1]['messages'][1]['content']
+        self.assertEqual(content[1], {'type': 'text', 'text': 'Image asset source_id: issue-image-3'})
+        self.assertEqual(content[2]['type'], 'image_url')
 
     def test_missing_usage_charges_reservation_and_fails(self):
         del self.payload['usage']
