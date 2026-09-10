@@ -1,0 +1,347 @@
+{
+  "plan": {
+    "plan_id": "plan:97bd4bfa21c9b053",
+    "boundary_ids": [
+      "97bd4bfa21c9b053"
+    ],
+    "edit_kind": "refine_guard",
+    "holes": [
+      {
+        "hole_id": "97bd4bfa21c9b053:0",
+        "site": {
+          "path": "ui.js",
+          "start_line": 2,
+          "end_line": 2,
+          "content_sha256": "6b141609352053c5ef33cd94d908481345fbcbc0a9ca23dce39acc3e320e5cd6",
+          "start_byte": 60,
+          "end_byte": 76,
+          "node_kind": "BooleanReturn",
+          "symbol": "shouldShow",
+          "node_count": 4
+        },
+        "expected_type": "boolean-expression",
+        "allowed_symbols": [
+          "active",
+          "hidden"
+        ]
+      }
+    ],
+    "obligations": [
+      {
+        "constraint_id": "c0",
+        "kind": "requirement",
+        "targets": [
+          {
+            "entity_id": "shouldShow",
+            "property_name": "return",
+            "context": {
+              "op": "and",
+              "args": [
+                {
+                  "op": "eq",
+                  "args": [
+                    {
+                      "op": "symbol",
+                      "args": [],
+                      "value": "active"
+                    },
+                    {
+                      "op": "literal",
+                      "args": [],
+                      "value": true
+                    }
+                  ],
+                  "value": null
+                },
+                {
+                  "op": "eq",
+                  "args": [
+                    {
+                      "op": "symbol",
+                      "args": [],
+                      "value": "hidden"
+                    },
+                    {
+                      "op": "literal",
+                      "args": [],
+                      "value": false
+                    }
+                  ],
+                  "value": null
+                }
+              ],
+              "value": null
+            }
+          }
+        ],
+        "relation": {
+          "op": "eq",
+          "args": [
+            {
+              "op": "symbol",
+              "args": [],
+              "value": "return"
+            },
+            {
+              "op": "literal",
+              "args": [],
+              "value": true
+            }
+          ],
+          "value": null
+        },
+        "source_ids": [
+          "s0"
+        ]
+      },
+      {
+        "constraint_id": "c1",
+        "kind": "requirement",
+        "targets": [
+          {
+            "entity_id": "shouldShow",
+            "property_name": "return",
+            "context": {
+              "op": "and",
+              "args": [
+                {
+                  "op": "eq",
+                  "args": [
+                    {
+                      "op": "symbol",
+                      "args": [],
+                      "value": "active"
+                    },
+                    {
+                      "op": "literal",
+                      "args": [],
+                      "value": true
+                    }
+                  ],
+                  "value": null
+                },
+                {
+                  "op": "eq",
+                  "args": [
+                    {
+                      "op": "symbol",
+                      "args": [],
+                      "value": "hidden"
+                    },
+                    {
+                      "op": "literal",
+                      "args": [],
+                      "value": true
+                    }
+                  ],
+                  "value": null
+                }
+              ],
+              "value": null
+            }
+          }
+        ],
+        "relation": {
+          "op": "eq",
+          "args": [
+            {
+              "op": "symbol",
+              "args": [],
+              "value": "return"
+            },
+            {
+              "op": "literal",
+              "args": [],
+              "value": false
+            }
+          ],
+          "value": null
+        },
+        "source_ids": [
+          "s1"
+        ]
+      },
+      {
+        "constraint_id": "c3",
+        "kind": "requirement",
+        "targets": [
+          {
+            "entity_id": "shouldShow",
+            "property_name": "return",
+            "context": {
+              "op": "and",
+              "args": [
+                {
+                  "op": "eq",
+                  "args": [
+                    {
+                      "op": "symbol",
+                      "args": [],
+                      "value": "active"
+                    },
+                    {
+                      "op": "literal",
+                      "args": [],
+                      "value": false
+                    }
+                  ],
+                  "value": null
+                },
+                {
+                  "op": "eq",
+                  "args": [
+                    {
+                      "op": "symbol",
+                      "args": [],
+                      "value": "hidden"
+                    },
+                    {
+                      "op": "literal",
+                      "args": [],
+                      "value": true
+                    }
+                  ],
+                  "value": null
+                }
+              ],
+              "value": null
+            }
+          }
+        ],
+        "relation": {
+          "op": "eq",
+          "args": [
+            {
+              "op": "symbol",
+              "args": [],
+              "value": "return"
+            },
+            {
+              "op": "literal",
+              "args": [],
+              "value": false
+            }
+          ],
+          "value": null
+        },
+        "source_ids": [
+          "s3"
+        ]
+      },
+      {
+        "constraint_id": "c2",
+        "kind": "frame",
+        "targets": [
+          {
+            "entity_id": "shouldShow",
+            "property_name": "return",
+            "context": {
+              "op": "and",
+              "args": [
+                {
+                  "op": "eq",
+                  "args": [
+                    {
+                      "op": "symbol",
+                      "args": [],
+                      "value": "active"
+                    },
+                    {
+                      "op": "literal",
+                      "args": [],
+                      "value": false
+                    }
+                  ],
+                  "value": null
+                },
+                {
+                  "op": "eq",
+                  "args": [
+                    {
+                      "op": "symbol",
+                      "args": [],
+                      "value": "hidden"
+                    },
+                    {
+                      "op": "literal",
+                      "args": [],
+                      "value": false
+                    }
+                  ],
+                  "value": null
+                }
+              ],
+              "value": null
+            }
+          }
+        ],
+        "relation": {
+          "op": "eq",
+          "args": [
+            {
+              "op": "symbol",
+              "args": [],
+              "value": "return"
+            },
+            {
+              "op": "literal",
+              "args": [],
+              "value": false
+            }
+          ],
+          "value": null
+        },
+        "source_ids": [
+          "s2"
+        ]
+      }
+    ],
+    "effects": [
+      {
+        "target": {
+          "entity_id": "shouldShow",
+          "property_name": "return",
+          "context": {
+            "op": "literal",
+            "args": [],
+            "value": true
+          }
+        },
+        "relation": {
+          "op": "symbol",
+          "args": [],
+          "value": "effect:may_change"
+        },
+        "coverage": "complete"
+      }
+    ],
+    "cost": {
+      "unresolved_requirements": 3,
+      "unresolved_frames": 1,
+      "protected_risk": 1,
+      "extra_scope": 0,
+      "invented_constants": 0,
+      "ast_size": 4
+    },
+    "unresolved": [
+      "c0",
+      "c1",
+      "c3",
+      "c2"
+    ],
+    "soft_obligations": []
+  },
+  "patch": {
+    "instance_id": "demo__ui-1",
+    "base_commit": "8c66c16575a9cbc828b4c712e379b1c8868efb36",
+    "plan_id": "plan:97bd4bfa21c9b053",
+    "unified_diff": "diff --git a/ui.js b/ui.js\n--- a/ui.js\n+++ b/ui.js\n@@ -1,3 +1,3 @@\n // 中文 🐈\n-function shouldShow(active, hidden) { return active || hidden; }\n+function shouldShow(active, hidden) { return (!(hidden) && active); }\n module.exports = {shouldShow};\n",
+    "sha256": "008a33bf077fa3615019f6b80dc9ce0f0dc9d9171fc54c38945881a49a0afd7d"
+  },
+  "unresolved": [
+    "c0",
+    "c1",
+    "c3",
+    "c2"
+  ]
+}

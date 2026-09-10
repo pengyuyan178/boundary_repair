@@ -1,0 +1,5 @@
+shouldShow is a pure Boolean entry function with Boolean active and hidden arguments.
+When active=true and hidden=false, return true.
+When active=true and hidden=true, return false.
+When active=false and hidden=false, keep returning false.
+When active=false and hidden=true, return false.

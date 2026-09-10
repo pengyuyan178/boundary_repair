@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "benchmark": false,
+  "model_mode": "fixture",
+  "fixture_contains_final_patch": false,
+  "before": [
+    true,
+    true,
+    false,
+    true
+  ],
+  "after": [
+    true,
+    false,
+    false,
+    false
+  ],
+  "expected": [
+    true,
+    false,
+    false,
+    false
+  ],
+  "model_calls": 1,
+  "git_apply_check": true,
+  "original_unchanged": true,
+  "batch_directory": "/mnt/data/boundary_demo_final/result/method/boundary_repair/offline-smoke",
+  "formal_evaluation_run": false
+}

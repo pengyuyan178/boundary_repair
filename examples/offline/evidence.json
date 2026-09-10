@@ -1,0 +1,303 @@
+{
+  "responses": {
+    "evidence.v1": {
+      "sources": [
+        {
+          "source_id": "s0",
+          "kind": "issue_text",
+          "locator": "When active=true and hidden=false, return true."
+        },
+        {
+          "source_id": "s1",
+          "kind": "issue_text",
+          "locator": "When active=true and hidden=true, return false."
+        },
+        {
+          "source_id": "s2",
+          "kind": "issue_text",
+          "locator": "When active=false and hidden=false, keep returning false."
+        },
+        {
+          "source_id": "s3",
+          "kind": "issue_text",
+          "locator": "When active=false and hidden=true, return false."
+        }
+      ],
+      "claims": [
+        {
+          "claim_id": "c0",
+          "kind": "requirement",
+          "source_ids": [
+            "s0"
+          ],
+          "description": "When active=true and hidden=false, return true.",
+          "targets": [
+            {
+              "entity_id": "shouldShow",
+              "property_name": "return",
+              "context": {
+                "op": "and",
+                "args": [
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "op": "symbol",
+                        "args": [],
+                        "value": "active"
+                      },
+                      {
+                        "op": "literal",
+                        "args": [],
+                        "value": true
+                      }
+                    ],
+                    "value": null
+                  },
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "op": "symbol",
+                        "args": [],
+                        "value": "hidden"
+                      },
+                      {
+                        "op": "literal",
+                        "args": [],
+                        "value": false
+                      }
+                    ],
+                    "value": null
+                  }
+                ],
+                "value": null
+              }
+            }
+          ],
+          "relation": {
+            "op": "eq",
+            "args": [
+              {
+                "op": "symbol",
+                "args": [],
+                "value": "return"
+              },
+              {
+                "op": "literal",
+                "args": [],
+                "value": true
+              }
+            ],
+            "value": null
+          }
+        },
+        {
+          "claim_id": "c1",
+          "kind": "requirement",
+          "source_ids": [
+            "s1"
+          ],
+          "description": "When active=true and hidden=true, return false.",
+          "targets": [
+            {
+              "entity_id": "shouldShow",
+              "property_name": "return",
+              "context": {
+                "op": "and",
+                "args": [
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "op": "symbol",
+                        "args": [],
+                        "value": "active"
+                      },
+                      {
+                        "op": "literal",
+                        "args": [],
+                        "value": true
+                      }
+                    ],
+                    "value": null
+                  },
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "op": "symbol",
+                        "args": [],
+                        "value": "hidden"
+                      },
+                      {
+                        "op": "literal",
+                        "args": [],
+                        "value": true
+                      }
+                    ],
+                    "value": null
+                  }
+                ],
+                "value": null
+              }
+            }
+          ],
+          "relation": {
+            "op": "eq",
+            "args": [
+              {
+                "op": "symbol",
+                "args": [],
+                "value": "return"
+              },
+              {
+                "op": "literal",
+                "args": [],
+                "value": false
+              }
+            ],
+            "value": null
+          }
+        },
+        {
+          "claim_id": "c2",
+          "kind": "frame",
+          "source_ids": [
+            "s2"
+          ],
+          "description": "When active=false and hidden=false, keep returning false.",
+          "targets": [
+            {
+              "entity_id": "shouldShow",
+              "property_name": "return",
+              "context": {
+                "op": "and",
+                "args": [
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "op": "symbol",
+                        "args": [],
+                        "value": "active"
+                      },
+                      {
+                        "op": "literal",
+                        "args": [],
+                        "value": false
+                      }
+                    ],
+                    "value": null
+                  },
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "op": "symbol",
+                        "args": [],
+                        "value": "hidden"
+                      },
+                      {
+                        "op": "literal",
+                        "args": [],
+                        "value": false
+                      }
+                    ],
+                    "value": null
+                  }
+                ],
+                "value": null
+              }
+            }
+          ],
+          "relation": {
+            "op": "eq",
+            "args": [
+              {
+                "op": "symbol",
+                "args": [],
+                "value": "return"
+              },
+              {
+                "op": "literal",
+                "args": [],
+                "value": false
+              }
+            ],
+            "value": null
+          }
+        },
+        {
+          "claim_id": "c3",
+          "kind": "requirement",
+          "source_ids": [
+            "s3"
+          ],
+          "description": "When active=false and hidden=true, return false.",
+          "targets": [
+            {
+              "entity_id": "shouldShow",
+              "property_name": "return",
+              "context": {
+                "op": "and",
+                "args": [
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "op": "symbol",
+                        "args": [],
+                        "value": "active"
+                      },
+                      {
+                        "op": "literal",
+                        "args": [],
+                        "value": false
+                      }
+                    ],
+                    "value": null
+                  },
+                  {
+                    "op": "eq",
+                    "args": [
+                      {
+                        "op": "symbol",
+                        "args": [],
+                        "value": "hidden"
+                      },
+                      {
+                        "op": "literal",
+                        "args": [],
+                        "value": true
+                      }
+                    ],
+                    "value": null
+                  }
+                ],
+                "value": null
+              }
+            }
+          ],
+          "relation": {
+            "op": "eq",
+            "args": [
+              {
+                "op": "symbol",
+                "args": [],
+                "value": "return"
+              },
+              {
+                "op": "literal",
+                "args": [],
+                "value": false
+              }
+            ],
+            "value": null
+          }
+        }
+      ],
+      "choice_groups": []
+    }
+  }
+}

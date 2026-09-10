@@ -1,0 +1,40 @@
+Name                                              Stmts   Miss Branch BrPart  Cover
+-----------------------------------------------------------------------------------
+src/boundary_repair/__init__.py                       1      0      0      0   100%
+src/boundary_repair/__main__.py                       3      3      2      0     0%
+src/boundary_repair/adapters/dataset.py              59     12     30      6    78%
+src/boundary_repair/adapters/frontend.py             85     16     32     12    76%
+src/boundary_repair/adapters/integrations.py          5      0      0      0   100%
+src/boundary_repair/adapters/logic.py                45      3     14      3    90%
+src/boundary_repair/adapters/model.py               169     26     66     19    80%
+src/boundary_repair/adapters/process.py              43      7      6      3    80%
+src/boundary_repair/adapters/program.py             180     17     94     17    88%
+src/boundary_repair/adapters/storage.py             103      3     28      3    95%
+src/boundary_repair/adapters/workspace.py           130     17     48     15    82%
+src/boundary_repair/algorithms/controls.py           41      1      2      1    95%
+src/boundary_repair/algorithms/expressivity.py       87      7     34      5    90%
+src/boundary_repair/algorithms/rendering.py          40      3     12      4    87%
+src/boundary_repair/algorithms/specification.py      78      4     22      4    92%
+src/boundary_repair/algorithms/synthesis.py         103     11     44     14    83%
+src/boundary_repair/bootstrap.py                     21      4      4      1    72%
+src/boundary_repair/cli.py                           58     18     18      1    64%
+src/boundary_repair/config.py                       156     20     56     20    81%
+src/boundary_repair/domain/errors.py                 13      0      0      0   100%
+src/boundary_repair/domain/repair.py                 99      0      0      0   100%
+src/boundary_repair/domain/runtime.py                71      4     18      4    91%
+src/boundary_repair/domain/specification.py          78      0      0      0   100%
+src/boundary_repair/domain/task.py                   46      0      0      0   100%
+src/boundary_repair/experiments/evaluation.py       153     29     74     22    75%
+src/boundary_repair/experiments/runner.py            86     13     12      3    84%
+src/boundary_repair/kernel/boolean.py                51      5     30      5    88%
+src/boundary_repair/kernel/codec.py                  44      6     22      6    82%
+src/boundary_repair/kernel/evidence.py               82     27     36     10    65%
+src/boundary_repair/kernel/files.py                  60     14     32     12    70%
+src/boundary_repair/kernel/retrieval.py              48      1     12      1    97%
+src/boundary_repair/kernel/terms.py                 186     40    116     22    74%
+src/boundary_repair/pipeline.py                      27      0      0      0   100%
+src/boundary_repair/ports.py                         42      0      0      0   100%
+-----------------------------------------------------------------------------------
+TOTAL                                              2493    311    864    213    83%
+
+5 empty files skipped.

@@ -1,0 +1,102 @@
+{
+  "schema_version": 2,
+  "version": "0.2.0",
+  "verified_on": "2026-09-09",
+  "environment": {
+    "system": "Linux",
+    "python": "3.13.5",
+    "node": "v22.16.0",
+    "git": "git version 2.47.3",
+    "typescript": "5.8.3"
+  },
+  "tests": {
+    "run": 115,
+    "passed": 115,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "log": "verification/tests.log"
+  },
+  "coverage": {
+    "covered_lines": 2182,
+    "num_statements": 2493,
+    "percent_covered": 83.08013106940722,
+    "percent_covered_display": "83",
+    "missing_lines": 311,
+    "excluded_lines": 34,
+    "percent_statements_covered": 87.52507019655035,
+    "percent_statements_covered_display": "88",
+    "num_branches": 864,
+    "num_partial_branches": 213,
+    "covered_branches": 607,
+    "missing_branches": 257,
+    "percent_branches_covered": 70.25462962962963,
+    "percent_branches_covered_display": "70"
+  },
+  "original_placeholders": {
+    "count": 23,
+    "implemented_and_body_exercised": 23,
+    "general_semantics_complete": false
+  },
+  "function_inventory": {
+    "all_definitions": 129,
+    "concrete": 116,
+    "unexercised_bodies": []
+  },
+  "smoke": {
+    "status": "passed",
+    "benchmark": false,
+    "model_mode": "fixture",
+    "fixture_contains_final_patch": false,
+    "before": [
+      true,
+      true,
+      false,
+      true
+    ],
+    "after": [
+      true,
+      false,
+      false,
+      false
+    ],
+    "expected": [
+      true,
+      false,
+      false,
+      false
+    ],
+    "model_calls": 1,
+    "git_apply_check": true,
+    "original_unchanged": true,
+    "batch_directory": "examples: generated into user-selected output directory",
+    "formal_evaluation_run": false
+  },
+  "compileall": "passed",
+  "wheel_build": "passed",
+  "zip_reextraction": {
+    "status": "passed",
+    "path_type": "Linux path with Chinese characters, not Windows",
+    "tests_passed": 115,
+    "smoke": "passed",
+    "manifest_hashes_before_metadata_update": "89/89",
+    "source_changed_after_test": false
+  },
+  "real_services": {
+    "remote_model": "not_run",
+    "public_image_vision": "not_run",
+    "docker_daemon": "not_available",
+    "official_harness": "contract_test_only",
+    "windows": "not_run",
+    "ssh_server": "not_connected",
+    "real_benchmark": "not_run"
+  },
+  "remaining_limits": [
+    "Full JavaScript/GUI/alias semantics not implemented; unsupported cases UNKNOWN.",
+    "MUST relative to extracted finite theory, not a proof of perceptual or language correctness.",
+    "Local Boolean entry reachability is not application/UI reachability.",
+    "General code filling remains semantically unproved; unresolved obligations retained.",
+    "No performance/novelty guarantee and no benchmark score from synthetic examples."
+  ],
+  "python_3_11_syntax": "parsed, not executed on 3.11"
+}

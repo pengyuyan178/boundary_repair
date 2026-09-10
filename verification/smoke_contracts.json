@@ -1,0 +1,671 @@
+{
+  "must": [
+    {
+      "constraint_id": "c0",
+      "kind": "requirement",
+      "targets": [
+        {
+          "entity_id": "shouldShow",
+          "property_name": "return",
+          "context": {
+            "op": "and",
+            "args": [
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "active"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": true
+                  }
+                ],
+                "value": null
+              },
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "hidden"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": false
+                  }
+                ],
+                "value": null
+              }
+            ],
+            "value": null
+          }
+        }
+      ],
+      "relation": {
+        "op": "eq",
+        "args": [
+          {
+            "op": "symbol",
+            "args": [],
+            "value": "return"
+          },
+          {
+            "op": "literal",
+            "args": [],
+            "value": true
+          }
+        ],
+        "value": null
+      },
+      "source_ids": [
+        "s0"
+      ]
+    },
+    {
+      "constraint_id": "c1",
+      "kind": "requirement",
+      "targets": [
+        {
+          "entity_id": "shouldShow",
+          "property_name": "return",
+          "context": {
+            "op": "and",
+            "args": [
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "active"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": true
+                  }
+                ],
+                "value": null
+              },
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "hidden"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": true
+                  }
+                ],
+                "value": null
+              }
+            ],
+            "value": null
+          }
+        }
+      ],
+      "relation": {
+        "op": "eq",
+        "args": [
+          {
+            "op": "symbol",
+            "args": [],
+            "value": "return"
+          },
+          {
+            "op": "literal",
+            "args": [],
+            "value": false
+          }
+        ],
+        "value": null
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "constraint_id": "c3",
+      "kind": "requirement",
+      "targets": [
+        {
+          "entity_id": "shouldShow",
+          "property_name": "return",
+          "context": {
+            "op": "and",
+            "args": [
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "active"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": false
+                  }
+                ],
+                "value": null
+              },
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "hidden"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": true
+                  }
+                ],
+                "value": null
+              }
+            ],
+            "value": null
+          }
+        }
+      ],
+      "relation": {
+        "op": "eq",
+        "args": [
+          {
+            "op": "symbol",
+            "args": [],
+            "value": "return"
+          },
+          {
+            "op": "literal",
+            "args": [],
+            "value": false
+          }
+        ],
+        "value": null
+      },
+      "source_ids": [
+        "s3"
+      ]
+    }
+  ],
+  "may": [],
+  "frames": [
+    {
+      "constraint_id": "c2",
+      "kind": "frame",
+      "targets": [
+        {
+          "entity_id": "shouldShow",
+          "property_name": "return",
+          "context": {
+            "op": "and",
+            "args": [
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "active"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": false
+                  }
+                ],
+                "value": null
+              },
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "hidden"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": false
+                  }
+                ],
+                "value": null
+              }
+            ],
+            "value": null
+          }
+        }
+      ],
+      "relation": {
+        "op": "eq",
+        "args": [
+          {
+            "op": "symbol",
+            "args": [],
+            "value": "return"
+          },
+          {
+            "op": "literal",
+            "args": [],
+            "value": false
+          }
+        ],
+        "value": null
+      },
+      "source_ids": [
+        "s2"
+      ]
+    }
+  ],
+  "witnesses": [
+    {
+      "witness_id": "c0:0",
+      "observations": [
+        {
+          "entity_id": "shouldShow",
+          "property_name": "return",
+          "context": {
+            "op": "and",
+            "args": [
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "active"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": true
+                  }
+                ],
+                "value": null
+              },
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "hidden"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": false
+                  }
+                ],
+                "value": null
+              }
+            ],
+            "value": null
+          }
+        }
+      ],
+      "assumptions": [
+        {
+          "op": "and",
+          "args": [
+            {
+              "op": "eq",
+              "args": [
+                {
+                  "op": "symbol",
+                  "args": [],
+                  "value": "active"
+                },
+                {
+                  "op": "literal",
+                  "args": [],
+                  "value": true
+                }
+              ],
+              "value": null
+            },
+            {
+              "op": "eq",
+              "args": [
+                {
+                  "op": "symbol",
+                  "args": [],
+                  "value": "hidden"
+                },
+                {
+                  "op": "literal",
+                  "args": [],
+                  "value": false
+                }
+              ],
+              "value": null
+            }
+          ],
+          "value": null
+        }
+      ],
+      "reachability": "unknown",
+      "source_ids": [
+        "s0"
+      ]
+    },
+    {
+      "witness_id": "c1:0",
+      "observations": [
+        {
+          "entity_id": "shouldShow",
+          "property_name": "return",
+          "context": {
+            "op": "and",
+            "args": [
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "active"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": true
+                  }
+                ],
+                "value": null
+              },
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "hidden"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": true
+                  }
+                ],
+                "value": null
+              }
+            ],
+            "value": null
+          }
+        }
+      ],
+      "assumptions": [
+        {
+          "op": "and",
+          "args": [
+            {
+              "op": "eq",
+              "args": [
+                {
+                  "op": "symbol",
+                  "args": [],
+                  "value": "active"
+                },
+                {
+                  "op": "literal",
+                  "args": [],
+                  "value": true
+                }
+              ],
+              "value": null
+            },
+            {
+              "op": "eq",
+              "args": [
+                {
+                  "op": "symbol",
+                  "args": [],
+                  "value": "hidden"
+                },
+                {
+                  "op": "literal",
+                  "args": [],
+                  "value": true
+                }
+              ],
+              "value": null
+            }
+          ],
+          "value": null
+        }
+      ],
+      "reachability": "unknown",
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "witness_id": "c2:0",
+      "observations": [
+        {
+          "entity_id": "shouldShow",
+          "property_name": "return",
+          "context": {
+            "op": "and",
+            "args": [
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "active"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": false
+                  }
+                ],
+                "value": null
+              },
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "hidden"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": false
+                  }
+                ],
+                "value": null
+              }
+            ],
+            "value": null
+          }
+        }
+      ],
+      "assumptions": [
+        {
+          "op": "and",
+          "args": [
+            {
+              "op": "eq",
+              "args": [
+                {
+                  "op": "symbol",
+                  "args": [],
+                  "value": "active"
+                },
+                {
+                  "op": "literal",
+                  "args": [],
+                  "value": false
+                }
+              ],
+              "value": null
+            },
+            {
+              "op": "eq",
+              "args": [
+                {
+                  "op": "symbol",
+                  "args": [],
+                  "value": "hidden"
+                },
+                {
+                  "op": "literal",
+                  "args": [],
+                  "value": false
+                }
+              ],
+              "value": null
+            }
+          ],
+          "value": null
+        }
+      ],
+      "reachability": "unknown",
+      "source_ids": [
+        "s2"
+      ]
+    },
+    {
+      "witness_id": "c3:0",
+      "observations": [
+        {
+          "entity_id": "shouldShow",
+          "property_name": "return",
+          "context": {
+            "op": "and",
+            "args": [
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "active"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": false
+                  }
+                ],
+                "value": null
+              },
+              {
+                "op": "eq",
+                "args": [
+                  {
+                    "op": "symbol",
+                    "args": [],
+                    "value": "hidden"
+                  },
+                  {
+                    "op": "literal",
+                    "args": [],
+                    "value": true
+                  }
+                ],
+                "value": null
+              }
+            ],
+            "value": null
+          }
+        }
+      ],
+      "assumptions": [
+        {
+          "op": "and",
+          "args": [
+            {
+              "op": "eq",
+              "args": [
+                {
+                  "op": "symbol",
+                  "args": [],
+                  "value": "active"
+                },
+                {
+                  "op": "literal",
+                  "args": [],
+                  "value": false
+                }
+              ],
+              "value": null
+            },
+            {
+              "op": "eq",
+              "args": [
+                {
+                  "op": "symbol",
+                  "args": [],
+                  "value": "hidden"
+                },
+                {
+                  "op": "literal",
+                  "args": [],
+                  "value": true
+                }
+              ],
+              "value": null
+            }
+          ],
+          "value": null
+        }
+      ],
+      "reachability": "unknown",
+      "source_ids": [
+        "s3"
+      ]
+    }
+  ],
+  "theory": {
+    "assumptions": [
+      {
+        "op": "symbol",
+        "args": [],
+        "value": "accept:c0"
+      },
+      {
+        "op": "symbol",
+        "args": [],
+        "value": "accept:c1"
+      },
+      {
+        "op": "symbol",
+        "args": [],
+        "value": "accept:c2"
+      },
+      {
+        "op": "symbol",
+        "args": [],
+        "value": "accept:c3"
+      }
+    ],
+    "choices": [],
+    "consistency": "sat",
+    "coverage": "complete"
+  },
+  "diagnostics": [
+    "MUST_is_relative_to_normalized_acceptance_theory_not_a_perception_proof"
+  ]
+}

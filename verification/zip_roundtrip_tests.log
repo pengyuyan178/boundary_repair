@@ -1,0 +1,160 @@
+test_bind_entities_real_source_ranges (test_algorithms.AlgorithmTests.test_bind_entities_real_source_ranges) ... ok
+test_conflicting_may_is_not_promoted_to_hard_obligation (test_algorithms.AlgorithmTests.test_conflicting_may_is_not_promoted_to_hard_obligation) ... ok
+test_constant_interface_is_inexpressible_parameters_are_feasible (test_algorithms.AlgorithmTests.test_constant_interface_is_inexpressible_parameters_are_feasible) ... ok
+test_extract_evidence_real_normalization (test_algorithms.AlgorithmTests.test_extract_evidence_real_normalization) ... ok
+test_missing_witness_cannot_certify_exclusion (test_algorithms.AlgorithmTests.test_missing_witness_cannot_certify_exclusion) ... ok
+test_must_may_frame_and_witness (test_algorithms.AlgorithmTests.test_must_may_frame_and_witness) ... ok
+test_rank_is_permutation_invariant (test_algorithms.AlgorithmTests.test_rank_is_permutation_invariant) ... ok
+test_synthesis_computes_patch_without_second_model_call (test_algorithms.AlgorithmTests.test_synthesis_computes_patch_without_second_model_call) ... ok
+test_alternatives_remain_may (test_algorithms.EvidenceTests.test_alternatives_remain_may) ... ok
+test_ambiguous_frame_is_not_protection (test_algorithms.EvidenceTests.test_ambiguous_frame_is_not_protection) ... ok
+test_frame_not_created_from_observation (test_algorithms.EvidenceTests.test_frame_not_created_from_observation) ... ok
+test_inconsistent_theory_not_vacuously_true (test_algorithms.EvidenceTests.test_inconsistent_theory_not_vacuously_true) ... ok
+test_model_cannot_assert_proof_flags (test_algorithms.EvidenceTests.test_model_cannot_assert_proof_flags) ... ok
+test_nonexistent_quote_rejected (test_algorithms.EvidenceTests.test_nonexistent_quote_rejected) ... ok
+test_unknown_source_rejected (test_algorithms.EvidenceTests.test_unknown_source_rejected) ... ok
+test_all_eight_combinations_execute (test_controls.ControlsTests.test_all_eight_combinations_execute) ... ok
+test_plain_specs_do_not_create_must (test_controls.ControlsTests.test_plain_specs_do_not_create_must) ... ok
+test_base_export_command_and_cleanup (test_docker_contract.DockerContractTests.test_base_export_command_and_cleanup) ... ok
+test_cleanup_on_archive_failure (test_docker_contract.DockerContractTests.test_cleanup_on_archive_failure) ... ok
+test_real_pipeline_produces_applied_behavioral_fix (test_end_to_end.EndToEndTests.test_real_pipeline_produces_applied_behavioral_fix) ... ok
+test_duplicate_predictions_rejected (test_evaluation.EvaluationTests.test_duplicate_predictions_rejected) ... ok
+test_evaluate_uses_report_not_returncode (test_evaluation.EvaluationTests.test_evaluate_uses_report_not_returncode) ... ok
+test_fixture_batch_is_never_official_score (test_evaluation.EvaluationTests.test_fixture_batch_is_never_official_score) ... ok
+test_harness_revision_mismatch_stops_before_run (test_evaluation.EvaluationTests.test_harness_revision_mismatch_stops_before_run) ... ok
+test_nonboolean_grade_not_coerced (test_evaluation.EvaluationTests.test_nonboolean_grade_not_coerced) ... ok
+test_reuse_of_evaluation_id_rejected (test_evaluation.EvaluationTests.test_reuse_of_evaluation_id_rejected) ... ok
+test_contradiction_certificate (test_logic.LogicTests.test_contradiction_certificate) ... ok
+test_deadline_unknown (test_logic.LogicTests.test_deadline_unknown) ... ok
+test_empty_theory_sat (test_logic.LogicTests.test_empty_theory_sat) ... ok
+test_extra_json_field_rejected (test_logic.LogicTests.test_extra_json_field_rejected) ... ok
+test_finite_integer_domain (test_logic.LogicTests.test_finite_integer_domain) ... ok
+test_mixed_sort_unknown (test_logic.LogicTests.test_mixed_sort_unknown) ... ok
+test_nested_domain_does_not_truncate (test_logic.LogicTests.test_nested_domain_does_not_truncate) ... ok
+test_sat_assignment (test_logic.LogicTests.test_sat_assignment) ... ok
+test_truncation_unknown (test_logic.LogicTests.test_truncation_unknown) ... ok
+test_unknown_values_not_null (test_logic.LogicTests.test_unknown_values_not_null) ... ok
+test_unsupported_unknown (test_logic.LogicTests.test_unsupported_unknown) ... ok
+test_unsupported_unreachable_branch_unknown (test_logic.LogicTests.test_unsupported_unreachable_branch_unknown) ... ok
+test_actual_http_serialization_usage_and_seed (test_model.ModelHTTPTests.test_actual_http_serialization_usage_and_seed) ... ok
+test_api_userinfo_not_accepted (test_model.ModelHTTPTests.test_api_userinfo_not_accepted) ... ok
+test_duplicate_requested_env_rejected (test_model.ModelHTTPTests.test_duplicate_requested_env_rejected) ... ok
+test_env_does_not_execute_shell_text (test_model.ModelHTTPTests.test_env_does_not_execute_shell_text) ... ok
+test_http_failure_has_no_hidden_retry (test_model.ModelHTTPTests.test_http_failure_has_no_hidden_retry) ... ok
+test_http_not_enabled_by_default (test_model.ModelHTTPTests.test_http_not_enabled_by_default) ... ok
+test_missing_usage_charges_reservation_and_fails (test_model.ModelHTTPTests.test_missing_usage_charges_reservation_and_fails) ... ok
+test_private_asset_dns_rejected (test_model.ModelHTTPTests.test_private_asset_dns_rejected) ... ok
+test_truncated_response_not_accepted (test_model.ModelHTTPTests.test_truncated_response_not_accepted) ... ok
+test_actual_git_apply_and_runtime_behavior (test_program.ProgramTests.test_actual_git_apply_and_runtime_behavior) ... ok
+test_calls_cannot_escape_boolean_grammar (test_program.ProgramTests.test_calls_cannot_escape_boolean_grammar) ... ok
+test_duplicate_or_missing_holes_rejected (test_program.ProgramTests.test_duplicate_or_missing_holes_rejected) ... ok
+test_index_reuses_immutable_snapshot (test_program.ProgramTests.test_index_reuses_immutable_snapshot) ... ok
+test_no_newline_diff_is_git_applicable (test_program.ProgramTests.test_no_newline_diff_is_git_applicable) ... ok
+test_noop_is_not_patch (test_program.ProgramTests.test_noop_is_not_patch) ... ok
+test_outside_range_modified_snapshot_rejected (test_program.ProgramTests.test_outside_range_modified_snapshot_rejected) ... ok
+test_overlapping_holes_rejected (test_program.ProgramTests.test_overlapping_holes_rejected) ... ok
+test_read_not_declared_is_rejected (test_program.ProgramTests.test_read_not_declared_is_rejected) ... ok
+test_syntax_invalid_is_rejected (test_program.ProgramTests.test_syntax_invalid_is_rejected) ... ok
+test_unicode_bytes_not_utf16 (test_program.ProgramTests.test_unicode_bytes_not_utf16) ... ok
+test_unknown_function_is_not_claimed_pure (test_program.ProgramTests.test_unknown_function_is_not_claimed_pure) ... ok
+test_complete_boolean_environments_and_limit (test_remaining_adapters.RemainingAdapterTests.test_complete_boolean_environments_and_limit) ... ok
+test_evaluation_wrapper_builds_explicit_request_without_feedback (test_remaining_adapters.RemainingAdapterTests.test_evaluation_wrapper_builds_explicit_request_without_feedback) ... ok
+test_image_redirect_and_oversize_fail_closed (test_remaining_adapters.RemainingAdapterTests.test_image_redirect_and_oversize_fail_closed) ... ok
+test_image_transport_conversion_and_hash_with_simulated_tls (test_remaining_adapters.RemainingAdapterTests.test_image_transport_conversion_and_hash_with_simulated_tls) ... ok
+test_pinned_connection_closes_socket_on_tls_failure (test_remaining_adapters.RemainingAdapterTests.test_pinned_connection_closes_socket_on_tls_failure) ... ok
+test_pinned_connection_uses_original_tls_hostname (test_remaining_adapters.RemainingAdapterTests.test_pinned_connection_uses_original_tls_hostname) ... ok
+test_source_context_honors_character_budget (test_remaining_adapters.RemainingAdapterTests.test_source_context_honors_character_budget) ... ok
+test_source_fingerprint_includes_frontend (test_remaining_adapters.RemainingAdapterTests.test_source_fingerprint_includes_frontend) ... ok
+test_all_eight_ablations_are_wired (test_scaffold.ScaffoldTests.test_all_eight_ablations_are_wired)
+三开关均替换为同形对照模块，而非绕过流程或共用创新结论。 ... ok
+test_all_functions_documented_and_annotated (test_scaffold.ScaffoldTests.test_all_functions_documented_and_annotated)
+所有源码函数都必须有注释、返回注解和非 self/cls 参数类型。 ... ok
+test_allowlist_excludes_all_answer_fields (test_scaffold.ScaffoldTests.test_allowlist_excludes_all_answer_fields)
+原始行含答案，但生成侧序列化不包含它们。 ... ok
+test_atomic_json_and_sha256 (test_scaffold.ScaffoldTests.test_atomic_json_and_sha256)
+中文 UTF-8 JSON 可重读，哈希与内容一致。 ... ok
+test_bad_asset_shape_rejected (test_scaffold.ScaffoldTests.test_bad_asset_shape_rejected)
+未知附件形状不被默默当作没有图片。 ... ok
+test_batch_never_overwrites_existing_directory (test_scaffold.ScaffoldTests.test_batch_never_overwrites_existing_directory)
+同名批次明确失败，原有结果不被清空。 ... ok
+test_budget_model_calls_and_output_accounted (test_scaffold.ScaffoldTests.test_budget_model_calls_and_output_accounted)
+输出总预算共享；第二次调用仅能使用剩余 token。 ... ok
+test_budget_overrun_not_hidden (test_scaffold.ScaffoldTests.test_budget_overrun_not_hidden)
+服务端超额输出保留真实计数，然后终止。 ... ok
+test_candidate_and_idea_limits (test_scaffold.ScaffoldTests.test_candidate_and_idea_limits)
+计划/候选计数不会突破显式上限。 ... ok
+test_cli_plan_never_reads_env_or_runs_model (test_scaffold.ScaffoldTests.test_cli_plan_never_reads_env_or_runs_model)
+plan 只解析配置，项目内敏感文件不会被读取。 ... ok
+test_config_resolves_relative_paths (test_scaffold.ScaffoldTests.test_config_resolves_relative_paths)
+项目路径不依赖 .git，其他路径相对项目根。 ... ok
+test_core_layers_do_not_import_adapters_or_evaluation (test_scaffold.ScaffoldTests.test_core_layers_do_not_import_adapters_or_evaluation)
+依赖方向受测试约束，防止以后把平台细节或评分反馈塞入算法。 ... ok
+test_deadline_is_explicit (test_scaffold.ScaffoldTests.test_deadline_is_explicit)
+墙钟过期禁止新工作；不声称能够替代容器硬超时。 ... ok
+test_domain_input_has_no_gold_fields (test_scaffold.ScaffoldTests.test_domain_input_has_no_gold_fields)
+TaskInput 的结构不提供任何 gold 或评测信息入口。 ... ok
+test_duplicate_instances_rejected (test_scaffold.ScaffoldTests.test_duplicate_instances_rejected)
+重复题目不能无声覆盖预测或放大样本数。 ... ok
+test_generation_configuration_failure_is_not_scored (test_scaffold.ScaffoldTests.test_generation_configuration_failure_is_not_scored)
+缺少镜像映射会中止并保存配置错误，剩余题不计为 unresolved。 ... ok
+test_image_assets_are_deduplicated (test_scaffold.ScaffoldTests.test_image_assets_are_deduplicated)
+同一原始附件只保留一次，顺序稳定。 ... ok
+test_injected_generation_writes_artifact_layout (test_scaffold.ScaffoldTests.test_injected_generation_writes_artifact_layout)
+使用 mock 生成器仅检验真实实验存储；此测试不宣称修复成功。 ... ok
+test_instance_map_loaded (test_scaffold.ScaffoldTests.test_instance_map_loaded)
+instance_id 为键的映射可以读取，且需要键与行匹配。 ... ok
+test_invalid_boolean_budget_rejected (test_scaffold.ScaffoldTests.test_invalid_boolean_budget_rejected)
+bool 不能当作整数预算通过校验。 ... ok
+test_json_array_loaded (test_scaffold.ScaffoldTests.test_json_array_loaded)
+数组格式数据导入后只得到 TaskInput。 ... ok
+test_jsonl_loaded (test_scaffold.ScaffoldTests.test_jsonl_loaded)
+明确 .jsonl 扩展名使用逐行解析。 ... ok
+test_localization_internal_steps_are_connected (test_scaffold.ScaffoldTests.test_localization_internal_steps_are_connected)
+定位按固定候选建模、判定并排序，不需要也不获取任何补丁评分。 ... ok
+test_missing_model_reference_is_configuration_error (test_scaffold.ScaffoldTests.test_missing_model_reference_is_configuration_error)
+模型引用缺失应得到字段错误，而非运行时构造 TypeError。 ... ok
+test_missing_selected_instance_rejected (test_scaffold.ScaffoldTests.test_missing_selected_instance_rejected)
+显式选择不存在的案例应报错而不是空跑。 ... ok
+test_model_adapter_does_not_fake_response (test_scaffold.ScaffoldTests.test_model_adapter_does_not_fake_response)
+未配置真实 API 时抛配置错误，不能隐式回落到离线 fixture。 ... ok
+test_patch_hash_mismatch_rejected (test_scaffold.ScaffoldTests.test_patch_hash_mismatch_rejected)
+错误哈希不能导出为正式预测。 ... ok
+test_pipeline_calls_exactly_three_stages (test_scaffold.ScaffoldTests.test_pipeline_calls_exactly_three_stages)
+用 mocks 验证真实 pipeline 的数据传递和顺序，不实现任何假修复算法。 ... ok
+test_pipeline_does_not_continue_after_placeholder (test_scaffold.ScaffoldTests.test_pipeline_does_not_continue_after_placeholder)
+未实现不伪作空规格，也不继续进入定位。 ... ok
+test_prediction_uses_official_three_fields (test_scaffold.ScaffoldTests.test_prediction_uses_official_three_fields)
+预测行只包含官方生成字段，不能混入 resolved 或 gold。 ... ok
+test_source_parses_as_python_311 (test_scaffold.ScaffoldTests.test_source_parses_as_python_311)
+用 3.11 语法级解析检查最低版本语法；不是实机 3.11 运行验证。 ... ok
+test_specification_internal_steps_are_connected (test_scaffold.ScaffoldTests.test_specification_internal_steps_are_connected)
+替换叶子仅检验 S1→S2→S3→S4 的真实编排，不实现规格算法。 ... ok
+test_specification_rejects_malformed_response (test_scaffold.ScaffoldTests.test_specification_rejects_malformed_response)
+实现后验证坏模型输出不能冒充规格，而不是继续要求占位异常。 ... ok
+test_storage_rejects_unsafe_names (test_scaffold.ScaffoldTests.test_storage_rejects_unsafe_names)
+案例目录不能穿越，Windows 保留名不落盘。 ... ok
+test_string_image_assets_supported (test_scaffold.ScaffoldTests.test_string_image_assets_supported)
+官方历史导出的字符串型 image_assets 可以读取。 ... ok
+test_synthesis_preserves_unresolved_obligations (test_scaffold.ScaffoldTests.test_synthesis_preserves_unresolved_obligations)
+作用域未决义务必须传播到 SynthesisResult，不能因 diff 生成而消失。 ... ok
+test_task_is_frozen (test_scaffold.ScaffoldTests.test_task_is_frozen)
+中间数据对象不能被下游原地改写。 ... ok
+test_unknown_config_key_rejected (test_scaffold.ScaffoldTests.test_unknown_config_key_rejected)
+拼错的配置字段不能被静默忽略。 ... ok
+test_unknown_dataset_wrapper_rejected (test_scaffold.ScaffoldTests.test_unknown_dataset_wrapper_rejected)
+未知 wrapper 不能被猜测成任务映射。 ... ok
+test_user_budget_values_preserved (test_scaffold.ScaffoldTests.test_user_budget_values_preserved)
+读取用户给出的预算和采样语义，额外明确每题唯一提交。 ... ok
+test_git_export_is_base_only_filtered_and_cleaned (test_workspace.WorkspaceTests.test_git_export_is_base_only_filtered_and_cleaned) ... ok
+test_revision_option_injection_rejected (test_workspace.WorkspaceTests.test_revision_option_injection_rejected) ... ok
+test_subprocess_no_shell_expansion (test_workspace.WorkspaceTests.test_subprocess_no_shell_expansion) ... ok
+test_subprocess_output_file_not_loaded_into_result (test_workspace.WorkspaceTests.test_subprocess_output_file_not_loaded_into_result) ... ok
+test_subprocess_timeout_terminates (test_workspace.WorkspaceTests.test_subprocess_timeout_terminates) ... ok
+test_tar_budget_checked (test_workspace.WorkspaceTests.test_tar_budget_checked) ... ok
+test_tar_source_symlink_rejected (test_workspace.WorkspaceTests.test_tar_source_symlink_rejected) ... ok
+test_tar_traversal_rejected (test_workspace.WorkspaceTests.test_tar_traversal_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 115 tests in 17.243s
+
+OK

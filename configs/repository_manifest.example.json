@@ -1,0 +1,9 @@
+{
+  "note": "Local development only. Repository content is exported from the exact task base_commit; baseline source repositories are NOT benchmark target repositories.",
+  "repositories": {
+    "owner/repository": {
+      "path": "E:/replace-with-benchmark-target-repository",
+      "trust_directory": false
+    }
+  }
+}

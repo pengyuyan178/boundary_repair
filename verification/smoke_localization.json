@@ -1,0 +1,207 @@
+{
+  "assessments": [
+    {
+      "boundary": {
+        "boundary_id": "97bd4bfa21c9b053",
+        "sites": [
+          {
+            "path": "ui.js",
+            "start_line": 2,
+            "end_line": 2,
+            "content_sha256": "6b141609352053c5ef33cd94d908481345fbcbc0a9ca23dce39acc3e320e5cd6",
+            "start_byte": 60,
+            "end_byte": 76,
+            "node_kind": "BooleanReturn",
+            "symbol": "shouldShow",
+            "node_count": 4
+          }
+        ],
+        "edit_kind": "refine_guard",
+        "readable_features": [
+          {
+            "feature_id": "active",
+            "expression": {
+              "op": "symbol",
+              "args": [],
+              "value": "active"
+            },
+            "source_ids": [
+              "code:ui.js:2"
+            ]
+          },
+          {
+            "feature_id": "hidden",
+            "expression": {
+              "op": "symbol",
+              "args": [],
+              "value": "hidden"
+            },
+            "source_ids": [
+              "code:ui.js:2"
+            ]
+          }
+        ],
+        "output_symbols": [
+          "return"
+        ],
+        "relevance": 3
+      },
+      "verdict": "feasible",
+      "required_features": [
+        {
+          "feature_id": "active",
+          "expression": {
+            "op": "symbol",
+            "args": [],
+            "value": "active"
+          },
+          "source_ids": [
+            "code:ui.js:2"
+          ]
+        },
+        {
+          "feature_id": "hidden",
+          "expression": {
+            "op": "symbol",
+            "args": [],
+            "value": "hidden"
+          },
+          "source_ids": [
+            "code:ui.js:2"
+          ]
+        }
+      ],
+      "certificate": "entry-boolean:97bd4bfa21c9b053:6b141609352053c5ef33cd94d908481345fbcbc0a9ca23dce39acc3e320e5cd6:finite-v1:sat:1:d602e088106eab20cd1453ea9287823a4dcf152f7b4d9f8017224e4a69c120ae",
+      "unresolved": [
+        "proof_scope:direct_boolean_function_entry_not_UI_reachability"
+      ]
+    },
+    {
+      "boundary": {
+        "boundary_id": "308b2769a8841943",
+        "sites": [
+          {
+            "path": "ui.js",
+            "start_line": 2,
+            "end_line": 2,
+            "content_sha256": "2f65de476e2a6c8b19b4bbc5ddf0db542bbda83a7d6c2221ce64f656017f2d64",
+            "start_byte": 15,
+            "end_byte": 79,
+            "node_kind": "Function",
+            "symbol": "shouldShow",
+            "node_count": 12
+          }
+        ],
+        "edit_kind": "freeform",
+        "readable_features": [],
+        "output_symbols": [],
+        "relevance": 4
+      },
+      "verdict": "unknown",
+      "required_features": [],
+      "certificate": null,
+      "unresolved": [
+        "reads_complete",
+        "pure_deterministic",
+        "witnesses_reachable",
+        "downstream_sound",
+        "unsupported_or_partial_local_semantics"
+      ]
+    },
+    {
+      "boundary": {
+        "boundary_id": "ca87633bfbabb96c",
+        "sites": [
+          {
+            "path": "ui.js",
+            "start_line": 1,
+            "end_line": 3,
+            "content_sha256": "cb5a1eb57cac8369ff0fb2949e5f53e85885d7d0af43c6bbc939d07cd9858ad6",
+            "start_byte": 0,
+            "end_byte": 111,
+            "node_kind": "File",
+            "symbol": "",
+            "node_count": 0
+          }
+        ],
+        "edit_kind": "freeform",
+        "readable_features": [],
+        "output_symbols": [],
+        "relevance": 4
+      },
+      "verdict": "unknown",
+      "required_features": [],
+      "certificate": null,
+      "unresolved": [
+        "reads_complete",
+        "pure_deterministic",
+        "witnesses_reachable",
+        "downstream_sound",
+        "unsupported_or_partial_local_semantics"
+      ]
+    },
+    {
+      "boundary": {
+        "boundary_id": "5dbb2e5c87f72287",
+        "sites": [
+          {
+            "path": "ui.js",
+            "start_line": 3,
+            "end_line": 3,
+            "content_sha256": "a30aa3b59a0a5c34c537d78d305e7f4dbc9ad1f5e8666b2a410a99f317c9325b",
+            "start_byte": 80,
+            "end_byte": 109,
+            "node_kind": "Assignment",
+            "symbol": "module.exports",
+            "node_count": 8
+          }
+        ],
+        "edit_kind": "rebind_identity",
+        "readable_features": [],
+        "output_symbols": [],
+        "relevance": 1
+      },
+      "verdict": "unknown",
+      "required_features": [],
+      "certificate": null,
+      "unresolved": [
+        "reads_complete",
+        "pure_deterministic",
+        "witnesses_reachable",
+        "downstream_sound",
+        "unsupported_or_partial_local_semantics"
+      ]
+    },
+    {
+      "boundary": {
+        "boundary_id": "f6d904f9af75f4f4",
+        "sites": [
+          {
+            "path": "ui.js",
+            "start_line": 2,
+            "end_line": 2,
+            "content_sha256": "6b141609352053c5ef33cd94d908481345fbcbc0a9ca23dce39acc3e320e5cd6",
+            "start_byte": 60,
+            "end_byte": 76,
+            "node_kind": "BooleanReturn",
+            "symbol": "shouldShow",
+            "node_count": 4
+          }
+        ],
+        "edit_kind": "refine_guard",
+        "readable_features": [],
+        "output_symbols": [
+          "return"
+        ],
+        "relevance": 3
+      },
+      "verdict": "inexpressible",
+      "required_features": [],
+      "certificate": "entry-boolean:f6d904f9af75f4f4:6b141609352053c5ef33cd94d908481345fbcbc0a9ca23dce39acc3e320e5cd6:finite-v1:unsat:0:99b1365abee295087d556a40e11d778a8ad014f8f02d2f92d2c6d83ddb57c4f8",
+      "unresolved": [
+        "proof_scope:direct_boolean_function_entry_not_UI_reachability"
+      ]
+    }
+  ],
+  "diagnostics": []
+}

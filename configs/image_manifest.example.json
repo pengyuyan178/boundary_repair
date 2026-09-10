@@ -1,0 +1,16 @@
+{
+  "note": "EXAMPLE ONLY. Replace every instance/repository/commit/digest/alias with inspected values. No image is pulled or retagged automatically.",
+  "instances": {
+    "replace__instance-1": {
+      "repo": "owner/repository",
+      "base_commit": "0000000000000000000000000000000000000000",
+      "image": "registry.example.invalid/repository/image@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "repository_path": "/testbed",
+      "harness_image": "replace-with-actual-harness-image-alias"
+    }
+  },
+  "evaluation": {
+    "max_workers": 1,
+    "timeout_seconds": 3600
+  }
+}

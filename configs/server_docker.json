@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "project_root": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair",
+  "dataset": "dataset/test/SWE-bench_Multimodal.json",
+  "dataset_source": "dataset/SOURCE.txt",
+  "results_root": "result/method/boundary_repair",
+  "env_file": "code/.env",
+  "target": "server",
+  "isolation": "docker",
+  "seed": 42,
+  "model": {
+    "name_env": "MODEL_NAME",
+    "endpoint_env": "MODEL_BASE_URL",
+    "api_key_env": "MODEL_API_KEY",
+    "label": "boundary_repair/unconfigured"
+  },
+  "budget": {
+    "timeout_seconds": 3600,
+    "max_model_calls": 100,
+    "max_output_tokens": 150000,
+    "max_patch_candidates": 20,
+    "max_ideas": 5
+  },
+  "policy": {
+    "require_witness": true,
+    "prefer_greedy_patch": true,
+    "allow_multiple_sampling": true,
+    "temperature": 1.0,
+    "final_submissions": 1
+  },
+  "modules": {
+    "partial_specification": true,
+    "expressivity_localization": true,
+    "scope_synthesis": true
+  },
+  "image_manifest": null,
+  "harness_python": null,
+  "harness_revision": null,
+  "node_candidates": [
+    "/snap/node/current",
+    "/data/zy/tracerepair_base_inputs/runtime-node20-offline-docs-20260908"
+  ],
+  "integration": {
+    "model_mode": "http",
+    "fixture_file": null,
+    "workspace_mode": "docker",
+    "repository_manifest": null,
+    "parser_module": "code/boundary_repair/node_modules/typescript",
+    "parser_mode": "typescript",
+    "max_files": 5000,
+    "max_file_bytes": 512000,
+    "max_context_chars": 100000,
+    "context_files": 8,
+    "max_boundaries": 40,
+    "response_tokens": 8000,
+    "http_timeout": 180,
+    "allow_local_http": false,
+    "max_asset_bytes": 10000000,
+    "max_assets": 8,
+    "max_workspace_bytes": 1000000000
+  }
+}
