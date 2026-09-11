@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from boundary_repair.domain.repair import (
+    EditScope,
+    EditTransaction,
     Effect,
     HoleFilling,
     LocalRepairModel,
@@ -14,7 +16,7 @@ from boundary_repair.domain.repair import (
     SynthesisResult,
 )
 from boundary_repair.domain.runtime import RunContext, StageEvent
-from boundary_repair.domain.specification import ContractSet, SolverAnswer, Term, Witness
+from boundary_repair.domain.specification import ContractSet, ObservationInterface, SolverAnswer, Term, Witness
 from boundary_repair.domain.task import IssueAsset, ProgramIndex, RepositorySnapshot, TaskInput
 
 
@@ -26,6 +28,7 @@ class ModelRequest:
     assets: tuple[IssueAsset, ...]
     schema_name: str
     max_output_tokens: int
+    output_schema: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,11 +57,38 @@ class LogicPort(Protocol):
         ...
 
 
-class ProgramPort(Protocol):
-    """JS/TS/JSX 等语义前端；不在此层决定论文的规格、排序或修复策略。"""
+class RepositoryPort(Protocol):
+    """Language-neutral source capabilities, independent of semantic completeness."""
+
+    def source_scope(self, snapshot: RepositorySnapshot, context: RunContext, query: str = '') -> EditScope:
+        """Retrieve and freeze bounded original text regions before semantic analysis."""
+        ...
+
+
+class PatchPort(Protocol):
+    """Atomic exact-base patch compilation shared by every generation mode."""
+
+    def freeze_plan(self, plan: PatchPlan, context: RunContext) -> None:
+        """Record the selected capabilities before any patch generation."""
+        ...
+
+    def compile(self, task: TaskInput, plan: PatchPlan, transaction: EditTransaction,
+                snapshot: RepositorySnapshot, context: RunContext) -> PatchArtifact:
+        """Compile one authorized transaction and check pristine-base application."""
+        ...
+
+
+class ProgramPort(RepositoryPort, PatchPort, Protocol):
+    """Facade combining optional semantics with independent repository and patch capabilities."""
 
     def index(self, snapshot: RepositorySnapshot, context: RunContext) -> ProgramIndex:
         """索引修复前符号与 AST 位置；不解析 node_modules、压缩副本或 Git 历史。"""
+        ...
+
+    def observation_interfaces(
+        self, snapshot: RepositorySnapshot, context: RunContext,
+    ) -> tuple[ObservationInterface, ...]:
+        """Declare exact code observations supported within the frozen evidence scope."""
         ...
 
     def summarize(

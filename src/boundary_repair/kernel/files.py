@@ -13,17 +13,22 @@ SUFFIXES = {'.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.css', '.scss', '.jso
 
 def allowed_source(relative: str, for_edit: bool = False) -> bool:
     """Filter dependencies, secrets, tests and generated outputs; edit policy is fail-closed."""
-    parts = PurePosixPath(relative).parts
-    if not parts or '\\' in relative or any(p in {'', '.', '..'} for p in parts):
+    path = PurePosixPath(relative)
+    parts = path.parts
+    if (not parts or path.is_absolute() or '\\' in relative or ':' in relative
+            or any(p in {'', '.', '..'} for p in relative.split('/'))):
         return False
     if any(p in EXCLUDED or p in TEST_PARTS or p.startswith('.env') for p in parts):
         return False
     name = parts[-1]
     if any(x in name for x in ('.min.', '.bundle.', '.test.', '.spec.')):
         return False
-    if name in {'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'evaluation.json'}:
+    if (name.lower() in {'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'evaluation.json',
+                         '.npmrc', '.pypirc', '.netrc', 'credentials', 'id_rsa', 'id_ed25519'}
+            or any(p.lower() in {'.ssh', '.aws', '.gnupg'} for p in parts)
+            or path.suffix.lower() in {'.pem', '.key', '.p12', '.pfx', '.keystore'}):
         return False
-    return PurePosixPath(relative).suffix in SUFFIXES
+    return True
 
 
 def safe_path(root: Path, relative: str) -> Path:

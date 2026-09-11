@@ -1,18 +1,17 @@
 """Independent plain baselines; same evidence/candidate plumbing, no expressivity or scope ranking."""
 from dataclasses import dataclass
-import json
 
-from boundary_repair.domain.errors import NoAdmissiblePatch
+from boundary_repair.domain.errors import ValidationError
 from boundary_repair.domain.repair import (
-    BoundaryAssessment, EditKind, ExpressivityVerdict, LocalizationResult, PatchPlan,
-    SynthesisResult, SyntaxHole,
+    BoundaryAssessment, ExpressivityVerdict, LocalizationResult,
+    SynthesisResult,
 )
 from boundary_repair.domain.runtime import RunContext
 from boundary_repair.domain.specification import BehaviorConstraint, ClaimKind, ContractSet, Coverage, InterpretationSpace, SolverStatus
 from boundary_repair.domain.task import RepositorySnapshot, TaskInput
-from boundary_repair.kernel.evidence import EVIDENCE_SCHEMA, EVIDENCE_SYSTEM, parse_evidence
-from boundary_repair.kernel.retrieval import candidate_boundaries, snippets
-from boundary_repair.ports import ModelPort, ModelRequest, ProgramPort
+from boundary_repair.kernel.evidence import evidence_request_v4, parse_evidence_v4
+from boundary_repair.kernel.retrieval import candidate_boundaries, scope_snippets
+from boundary_repair.ports import ModelPort, ProgramPort
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,15 +26,20 @@ class PlainControls:
 
     def recover(self, task: TaskInput, snapshot: RepositorySnapshot, context: RunContext) -> ContractSet:
         """C1: one ordinary evidence/caption request; all proposed requirements remain MAY."""
-        code = snippets(self.program.index(snapshot, context), snapshot, task.problem_statement, self.context_files, self.max_context_chars)
-        prompt = json.dumps({'issue': task.problem_statement, 'assets': [a.source_id for a in task.assets],
-                             'base_code': code, 'output_example': EVIDENCE_SCHEMA}, ensure_ascii=False)
-        result = self.model.complete(ModelRequest(EVIDENCE_SYSTEM, prompt, task.assets, 'evidence.v1', self.response_tokens), context)
-        evidence = parse_evidence(result.text, task, code)
-        constraints = tuple(BehaviorConstraint(c.claim_id, c.kind, c.targets, c.statement, c.source_ids)
+        code = scope_snippets(self.program.source_scope(snapshot, context, task.problem_statement))
+        interfaces = self.program.observation_interfaces(snapshot, context)
+        result = self.model.complete(evidence_request_v4(task, code, self.response_tokens, interfaces), context)
+        theory = InterpretationSpace((), (), SolverStatus.UNKNOWN, Coverage.PARTIAL)
+        try:
+            evidence = parse_evidence_v4(result.text, task, code, interfaces)
+        except ValidationError:
+            return ContractSet((), (), (), (), theory, ('evidence_extraction_unavailable:validation',), 'unavailable')
+        constraints = tuple(BehaviorConstraint(c.claim_id, c.kind, c.targets, c.statement, c.source_ids,
+                                               c.description, c.entry_cases)
                             for c in evidence.claims if c.kind != ClaimKind.OBSERVATION)
-        return ContractSet((), constraints, (), (), InterpretationSpace((), (), SolverStatus.UNKNOWN, Coverage.PARTIAL),
-                           ('plain_control_no_entailment_no_reachability',))
+        return ContractSet((), constraints, (), (), theory,
+                           ('plain_control_no_entailment_no_reachability',), 'partial' if constraints else 'unavailable',
+                           interpretation_groups=evidence.interpretation_groups, sources=evidence.sources)
 
     def locate(self, task: TaskInput, contracts: ContractSet, snapshot: RepositorySnapshot,
                context: RunContext) -> LocalizationResult:
@@ -47,18 +51,10 @@ class PlainControls:
     def synthesize(self, task: TaskInput, contracts: ContractSet, localization: LocalizationResult,
                    snapshot: RepositorySnapshot, context: RunContext) -> SynthesisResult:
         """C3: generate once in the top available scope; do not use six-dimensional cost ordering."""
-        available = [a for a in localization.assessments if a.verdict != ExpressivityVerdict.INEXPRESSIBLE or not a.certificate]
-        if not available:
-            raise NoAdmissiblePatch('plain_no_candidate')
-        boundary = available[0].boundary
-        context.budget.claim_ideas()
-        context.budget.claim_candidates()
-        holes = tuple(SyntaxHole(f'plain:{i}', span, 'source-fragment', ()) for i, span in enumerate(boundary.sites))
-        plan = PatchPlan('plain:' + boundary.boundary_id, (boundary.boundary_id,), EditKind.FREEFORM,
-                         holes, contracts.must + contracts.frames, (),
-                         unresolved=('plain_generated_semantics_unproved',), soft_obligations=contracts.may)
-        # Sharing schema validation and constrained byte emission does not run G1/G2 or Boolean synthesis.
-        from boundary_repair.algorithms.rendering import HoleRenderer
-        fillings = HoleRenderer(self.model, self.response_tokens, self.max_context_chars).render(task, plan, snapshot, context)
-        patch = self.program.materialize(task, plan, fillings, snapshot, context)
+        from boundary_repair.algorithms.rendering import TransactionRenderer, transaction_plan
+        scope = self.program.source_scope(snapshot, context, task.problem_statement)
+        plan = transaction_plan(contracts, scope, context, 'plain')
+        self.program.freeze_plan(plan, context)
+        transaction = TransactionRenderer(self.model, self.response_tokens).render(task, plan, context)
+        patch = self.program.compile(task, plan, transaction, snapshot, context)
         return SynthesisResult(plan, patch, plan.unresolved)

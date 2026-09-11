@@ -1,14 +1,13 @@
 """Repair-interface expressivity: model-restricted certificates, never global file exclusion."""
 from dataclasses import dataclass, replace
 from itertools import combinations
-import hashlib
 
 from boundary_repair.domain.repair import BoundaryAssessment, Feature, ExpressivityVerdict, LocalRepairModel, LocalizationResult, RepairBoundary
 from boundary_repair.domain.runtime import RunContext
 from boundary_repair.domain.specification import ContractSet, Coverage, SolverStatus, Term
 from boundary_repair.domain.task import RepositorySnapshot, TaskInput
 from boundary_repair.kernel.retrieval import candidate_boundaries
-from boundary_repair.kernel.terms import literal, literal_assignments, substitute, symbol, symbols
+from boundary_repair.kernel.terms import literal_assignments, substitute
 from boundary_repair.ports import LogicPort, ProgramPort
 
 
@@ -46,26 +45,30 @@ class ExpressivityLocalization:
         constraints = list(model.constraints)
         covered = set()
         reliable = model.coverage == Coverage.COMPLETE
+        obligations = {f'{claim.constraint_id}:{number}': (claim, case)
+                       for claim in contracts.must + contracts.frames
+                       for number, case in enumerate(claim.entry_cases)}
         for index, witness in enumerate(model.witnesses):
-            targets = witness.observations
-            assignments = literal_assignments(targets[0].context) if len(targets) == 1 else None
-            if assignments is None:
+            obligation = obligations.get(witness.witness_id)
+            if obligation is None:
                 reliable = False
                 continue
-            for claim in contracts.must + contracts.frames:
-                if not targets or targets[0] not in claim.targets:
-                    continue
-                replacements = {name: literal(value) for name, value in assignments.items()}
-                replacements.update({'return': model.output_terms[index], 'base:return': symbol(f'base_out:{index}')})
-                relation = substitute(claim.relation, replacements)
-                if set(symbols(relation)) - {f'local_out:{index}', f'base_out:{index}'}:
-                    reliable = False
-                    continue
-                constraints.append(relation)
-                covered.add(claim.constraint_id)
-        if {c.constraint_id for c in contracts.must + contracts.frames} - covered:
+            claim, case = obligation
+            if (witness.interface != case.interface or witness.observations != (case.target,)
+                    or not claim.source_ids or witness.source_ids != claim.source_ids):
+                reliable = False
+                continue
+            relation = substitute(case.relation, {'return': model.output_terms[index]})
+            constraints.append(relation)
+            covered.add(witness.witness_id)
+        if (set(obligations) - covered
+                or any(not claim.entry_cases for claim in contracts.must + contracts.frames)):
             reliable = False
-        return replace(model, constraints=tuple(constraints), coverage=Coverage.COMPLETE if reliable else Coverage.PARTIAL)
+        diagnostics = tuple('unbound_hard_constraint:' + claim.constraint_id
+                            for claim in contracts.must + contracts.frames if not claim.entry_cases)
+        diagnostics += tuple('uncovered_entry_case:' + key for key in sorted(set(obligations) - covered))
+        return replace(model, constraints=tuple(constraints), coverage=Coverage.COMPLETE if reliable else Coverage.PARTIAL,
+                       diagnostics=model.diagnostics + diagnostics)
 
     def assess_expressivity(self, model: LocalRepairModel, contracts: ContractSet,
                             context: RunContext) -> BoundaryAssessment:
@@ -76,7 +79,7 @@ class ExpressivityLocalization:
         if model.coverage != Coverage.COMPLETE or missing or not model.witnesses:
             return BoundaryAssessment(model.boundary, ExpressivityVerdict.UNKNOWN,
                                       model.boundary.readable_features, None,
-                                      missing + ('unsupported_or_partial_local_semantics',))
+                                      missing + model.diagnostics + ('unsupported_or_partial_local_semantics',))
         answer = self.logic.check(model.constraints, context)
         if answer.status == SolverStatus.UNKNOWN:
             return BoundaryAssessment(model.boundary, ExpressivityVerdict.UNKNOWN,
@@ -88,7 +91,8 @@ class ExpressivityLocalization:
         if verdict == ExpressivityVerdict.FEASIBLE and len(required) <= 8:
             required = self.minimum_features(model, context)
         return BoundaryAssessment(model.boundary, verdict, required, certificate,
-                                  ('proof_scope:direct_boolean_function_entry_not_UI_reachability',))
+                                  ('proof_scope:direct_boolean_function_entry_not_UI_reachability',
+                                   'entry_case_evidence_interpretation_not_verified'))
 
     def minimum_features(self, model: LocalRepairModel, context: RunContext) -> tuple[Feature, ...]:
         """Find a smallest read subset by adding equal-output constraints for input collisions.

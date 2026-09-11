@@ -1,20 +1,21 @@
 """Parse-only program adapter, sound limited Boolean entry models, and hash-bound patch emission."""
 from __future__ import annotations
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 import difflib
 import hashlib
 import json
-from pathlib import Path
+import re
 from typing import Any
 
-from boundary_repair.adapters.frontend import collect_sources, parse_sources
+from boundary_repair.adapters.frontend import analyze_sources, parse_sources
+from boundary_repair.adapters.repository import SourceRepository, PatchCompiler, bind_edit_blocks
 from boundary_repair.config import ExperimentConfig
 from boundary_repair.domain.errors import NoAdmissiblePatch, ValidationError
-from boundary_repair.domain.repair import Effect, HoleFilling, LocalRepairModel, PatchArtifact, PatchPlan, ProofAssumptions, RepairBoundary
+from boundary_repair.domain.repair import EditScope, EditTransaction, Effect, HoleFilling, LocalRepairModel, PatchArtifact, PatchPlan, ProofAssumptions, RepairBoundary
 from boundary_repair.domain.runtime import RunContext
-from boundary_repair.domain.specification import Coverage, ObservationKey, SolverStatus, Term, Witness
+from boundary_repair.domain.specification import Coverage, ObservationInterface, ObservationKey, SolverStatus, Term, Witness
 from boundary_repair.domain.task import ProgramIndex, RepositorySnapshot, SourceSpan, TaskInput
-from boundary_repair.kernel.files import allowed_source, safe_path, source_slice, tree_digest
+from boundary_repair.kernel.files import allowed_source, source_slice, tree_digest
 from boundary_repair.kernel.terms import evaluate, literal, literal_assignments, symbol, term_from_json
 
 
@@ -22,34 +23,96 @@ from boundary_repair.kernel.terms import evaluate, literal, literal_assignments,
 class ProgramAdapter:
     """Cache only one immutable snapshot; never execute target imports, callbacks or build scripts."""
     config: ExperimentConfig
-    _key: tuple[str, str] | None = field(default=None, init=False, repr=False)
+    _key: tuple[str, ...] | None = field(default=None, init=False, repr=False)
     _data: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _index: ProgramIndex | None = field(default=None, init=False, repr=False)
+    _scope: EditScope | None = field(default=None, init=False, repr=False)
+
+    def source_scope(self, snapshot: RepositorySnapshot, context: RunContext, query: str = '') -> EditScope:
+        """Freeze task-local retrieval once, independently of semantic parser availability."""
+        key = (str(snapshot.root.resolve()), snapshot.tree_sha256, context.run_id, context.instance_id)
+        if key != self._key:
+            from boundary_repair.kernel.files import safe_path
+            scope = SourceRepository(self.config).retrieve(snapshot, query, context)
+            sources = [{'path': file.path, 'source': safe_path(snapshot.root, file.path).read_bytes().decode(file.encoding)}
+                       for file in scope.files]
+            parsed = analyze_sources(sources, self.config, context)
+            self._scope = bind_edit_blocks(snapshot, scope, parsed, query)
+            self._key, self._index, self._data = key, None, parsed
+        return self._scope
+
+    def freeze_plan(self, plan: PatchPlan, context: RunContext) -> None:
+        """Persist capabilities and generation mode before any code-generation operation."""
+        from boundary_repair.adapters.storage import safe_component, write_json
+        destination = (self.config.results_root / safe_component(context.run_id) / 'cases'
+                       / safe_component(context.instance_id) / 'trajectory' / 'generation_plan.json')
+        if destination.exists():
+            raise ValidationError('generation_plan_already_frozen')
+        write_json(destination, plan)
+
+    def compile(self, task: TaskInput, plan: PatchPlan, transaction: EditTransaction,
+                snapshot: RepositorySnapshot, context: RunContext) -> PatchArtifact:
+        """Delegate language-neutral transaction validation to the shared patch compiler."""
+        return PatchCompiler(self.config).compile(task, plan, transaction, snapshot, context)
 
     def index(self, snapshot: RepositorySnapshot, context: RunContext) -> ProgramIndex:
-        """Index production sources with exact spans; include explicit partial file fallbacks."""
-        context.budget.check_deadline()
-        key = (str(snapshot.root.resolve()), snapshot.tree_sha256)
-        if key == self._key and self._index is not None:
+        """Analyze only retrieved UTF-8 files; text retrieval never waits for whole-repo parsing."""
+        from boundary_repair.kernel.files import safe_path
+        scope = self.source_scope(snapshot, context)
+        if self._index is not None:
             return self._index
-        files, truncated = collect_sources(snapshot, self.config)
-        parsed = parse_sources(files, self.config, context)
-        locations, names, interfaces = [], set(), []
-        diagnostics = list(truncated)
-        for file in files:
-            raw = file['source'].encode('utf-8')
+        locations = []
+        diagnostics = list(scope.diagnostics)
+        supported_paths = set()
+        for file in scope.files:
+            if file.encoding != 'utf-8':
+                diagnostics.append('semantic_encoding_unsupported:' + file.path)
+                continue
+            supported_paths.add(file.path)
+            raw = safe_path(snapshot.root, file.path).read_bytes()
             if raw:
-                locations.append(SourceSpan(file['path'], 1, max(1, len(raw.splitlines())),
-                                            hashlib.sha256(raw).hexdigest(), 0, len(raw), 'File'))
+                locations.append(SourceSpan(file.path, 1, max(1, len(raw.splitlines())),
+                                            file.sha256, 0, len(raw), 'File'))
+        parsed = self._data
+        names, interfaces = set(), []
         for row in parsed['files']:
+            if row['path'] not in supported_paths:
+                continue
             names.update(row.get('identifiers', []))
             diagnostics.extend(f"{row['path']}:{d}" for d in row.get('unsupported', []))
             locations.extend(SourceSpan(**item) for item in row.get('locations', []))
             interfaces.extend((SourceSpan(**item['site']), tuple(item['params'])) for item in row.get('functions', []))
         self._data = parsed
-        self._key = key
         self._index = ProgramIndex(tuple(sorted(names)), tuple(locations), tuple(diagnostics), tuple(interfaces))
         return self._index
+
+    def observation_interfaces(self, snapshot: RepositorySnapshot,
+                               context: RunContext) -> tuple[ObservationInterface, ...]:
+        """Publish only visible pure Boolean entries, with path, parameters and snapshot identity."""
+        index = self.index(snapshot, context)
+        result = tuple(item for site, parameters in index.read_interfaces
+                       if (item := self._observation_interface(site, parameters, snapshot, context)) is not None)
+        return tuple(sorted(result, key=lambda item: (item.site.path, item.site.start_byte)))
+
+    def _observation_interface(self, site: SourceSpan, parameters: tuple[str, ...],
+                               snapshot: RepositorySnapshot, context: RunContext) -> ObservationInterface | None:
+        """Bind one observed return to its complete visible owner and immutable source identity."""
+        index = self.index(snapshot, context)
+        scope = self.source_scope(snapshot, context)
+        owners = tuple(owner for owner in index.locations if owner.node_kind == 'Function'
+                       and owner.path == site.path and owner.start_byte <= site.start_byte
+                       and site.end_byte <= owner.end_byte)
+        if not owners:
+            return None
+        owner = min(owners, key=lambda span: span.end_byte - span.start_byte)
+        if not any(region.path == owner.path and region.start_byte <= owner.start_byte
+                   and owner.end_byte <= region.end_byte for region in scope.regions):
+            return None
+        source_slice(snapshot.root, owner)
+        identity = json.dumps((snapshot.tree_sha256, asdict(owner), asdict(site), parameters),
+                              ensure_ascii=False, sort_keys=True).encode('utf-8')
+        interface_id = 'entry:' + hashlib.sha256(identity).hexdigest()[:24]
+        return ObservationInterface(interface_id, site, parameters, snapshot.tree_sha256)
 
     def function_summary(self, site: SourceSpan, snapshot: RepositorySnapshot,
                          context: RunContext) -> dict[str, Any] | None:
@@ -79,9 +142,13 @@ class ProgramAdapter:
         reads = tuple(feature.feature_id for feature in boundary.readable_features)
         if any(name not in params for name in reads):
             return unsupported
+        declared = self._observation_interface(boundary.sites[0], params, snapshot, context)
         actual, inputs, outputs, constraints = [], [], [], []
         complete = True
         for witness in witnesses:
+            binding = witness.interface
+            if binding is None or binding != declared:
+                continue
             if len(witness.observations) != 1:
                 complete = False
                 continue
@@ -124,6 +191,13 @@ class ProgramAdapter:
             else:
                 result.append(Effect(ObservationKey(hole.site.symbol or 'file:' + hole.site.path, '*', literal(True)),
                                      symbol('effect:unknown'), Coverage.PARTIAL))
+        if not plan.holes and plan.edit_scope is not None:
+            for path in sorted({r.path for r in plan.edit_scope.regions}):
+                result.append(Effect(ObservationKey('file:' + path, '*', literal(True)),
+                                     symbol('effect:unknown_transitive'), Coverage.PARTIAL))
+            if plan.edit_scope.creation_roots:
+                result.append(Effect(ObservationKey('*', '*', literal(True)),
+                                     symbol('effect:unknown_new_file'), Coverage.PARTIAL))
         if not result:
             result.append(Effect(ObservationKey('*', '*', literal(True)), symbol('effect:unknown'), Coverage.PARTIAL))
         return tuple(result)
@@ -141,6 +215,9 @@ class ProgramAdapter:
         if tree_digest(snapshot.root) != snapshot.tree_sha256:
             raise ValidationError('snapshot_changed_since_export')
         fills = {f.hole_id: f.source_text for f in fillings}
+        operations = {f.hole_id: f.operation for f in fillings}
+        self.index(snapshot, context)
+        base_files = {row['path']: row for row in self._data['files']}
         if len(fills) != len(fillings) or set(fills) != {h.hole_id for h in plan.holes}:
             raise ValidationError('hole_ids_must_match_exactly')
         if len({h.hole_id for h in plan.holes}) != len(plan.holes):
@@ -154,6 +231,27 @@ class ProgramAdapter:
             text = fills[hole.hole_id]
             if not isinstance(text, str) or '\x00' in text or len(text.encode()) > self.config.integration.max_file_bytes:
                 raise ValidationError('invalid_hole_text')
+            old_text = original[start:end].decode('utf-8')
+            if text != old_text:
+                from boundary_repair.domain.repair import edit_operations
+                if operations[hole.hole_id] not in edit_operations(hole.expected_type):
+                    raise ValidationError('edit_operation_not_declared')
+                if hole.expected_type == 'source-fragment' or hole.site.node_kind in {'File', 'Function', 'Assignment'}:
+                    raise ValidationError('unbounded_hole_not_allowed')
+                if operations[hole.hole_id] == 'delete' and text != '':
+                    raise ValidationError('invalid_delete_arguments')
+                if not text.strip() and not (operations[hole.hole_id] == 'delete' and hole.expected_type == 'local:Statement'):
+                    raise ValidationError('implicit_deletion_not_allowed')
+                omission = r'(?im)^\s*(?://|/\*|\*)[^\n]*(?:\b(?:keep|leave|rest|remaining)\b[^\n]*\b(?:unchanged|same)\b|\.\.\.|其余.*(?:不变|省略))'
+                if any(match not in old_text for match in re.findall(omission, text)):
+                    raise ValidationError('omission_placeholder')
+                if hole.expected_type == 'local:TextLine':
+                    ending = '\r\n' if old_text.endswith('\r\n') else '\n' if old_text.endswith('\n') else ''
+                    text = text.rstrip('\r\n')
+                    if '\n' in text or '\r' in text:
+                        raise ValidationError('text_line_scope_escaped')
+                    text += ending
+                    fills[hole.hole_id] = text
             originals[hole.site.path] = original
             edits.setdefault(hole.site.path, []).append((start, end, text.encode('utf-8')))
         patched: dict[str, bytes] = {}
@@ -173,13 +271,47 @@ class ProgramAdapter:
         for file in parsed['files']:
             if any(item.startswith('syntax:') for item in file.get('unsupported', [])):
                 raise ValidationError('generated_syntax_invalid')
+        parsed_files = {row['path']: row for row in parsed['files']}
+        known_changes = [p for p in patched if patched[p] != originals[p]]
+        if known_changes and all(base_files[p].get('semantic_hash') is not None
+                                 and base_files[p]['semantic_hash'] == parsed_files[p].get('semantic_hash')
+                                 for p in known_changes):
+            raise NoAdmissiblePatch('no_executable_change')
+        for hole in plan.holes:
+            data, start, end = source_slice(snapshot.root, hole.site)
+            replacement = fills[hole.hole_id].encode('utf-8')
+            if replacement == data[start:end]:
+                continue
+            if operations[hole.hole_id] == 'delete':
+                continue
+            if hole.expected_type == 'local:TextLine':
+                continue
+            offset = sum(len(value) - (right - left) for left, right, value in edits[hole.site.path]
+                         if right <= start and left < start)
+            matches = [site for site in parsed_files[hole.site.path].get('locations', [])
+                       if site['start_byte'] == start + offset
+                       and site['end_byte'] == start + offset + len(replacement)
+                       and site['node_kind'] == hole.site.node_kind]
+            if not matches:
+                raise ValidationError('local_syntax_scope_escaped')
+            if operations[hole.hole_id] == 'guard_consumer':
+                guards = parsed_files[hole.site.path].get('consumer_guards', [])
+                if not any(guard['start_byte'] == start + offset
+                           and guard['end_byte'] == start + offset + len(replacement)
+                           and guard['fallback'] == data[start:end].decode('utf-8') for guard in guards):
+                    raise ValidationError('consumer_fallback_not_retained')
         # For certified Boolean holes, reparse proves that the new expression cannot read outside
         # the declared interface or introduce calls, closures, side effects, or fresh parameters.
         for hole in plan.holes:
             if hole.expected_type != 'boolean-expression':
                 continue
+            start, end = hole.site.start_byte, hole.site.end_byte
+            offset = sum(len(value) - (right - left) for left, right, value in edits[hole.site.path]
+                         if right <= start and left < start)
             matches = [f for row in parsed['files'] if row['path'] == hole.site.path
-                       for f in row.get('functions', []) if f['name'] == hole.site.symbol]
+                       for f in row.get('functions', [])
+                       if f['site']['start_byte'] == start + offset
+                       and f['site']['end_byte'] == start + offset + len(fills[hole.hole_id].encode('utf-8'))]
             if len(matches) != 1:
                 raise ValidationError('boolean_grammar_escaped')
             from boundary_repair.kernel.terms import symbols
@@ -189,18 +321,13 @@ class ProgramAdapter:
             original_summary = self.function_summary(hole.site, snapshot, context)
             if original_summary is None:
                 raise ValidationError('original_boolean_summary_missing')
-            original_term = term_from_json(original_summary['expression'])
             for obligation in plan.obligations:
-                for target in obligation.targets:
-                    if target.entity_id != hole.site.symbol or target.property_name != 'return':
-                        continue
-                    values = literal_assignments(target.context)
-                    if values is None:
-                        raise ValidationError('boolean_obligation_context_unsupported')
-                    environment = dict(values)
-                    environment['return'] = evaluate(emitted, values)
-                    environment['base:return'] = evaluate(original_term, values)
-                    if evaluate(obligation.relation, environment) is not True:
+                if not obligation.entry_cases:
+                    raise ValidationError('boolean_obligation_unbound')
+                for case in obligation.entry_cases:
+                    if case.interface.site != hole.site or case.interface.snapshot_sha256 != snapshot.tree_sha256:
+                        raise ValidationError('boolean_obligation_interface_mismatch')
+                    if evaluate(emitted, dict(case.inputs)) is not case.expected:
                         raise ValidationError('generated_boolean_obligation_violated')
         patches = []
         for path in sorted(patched):

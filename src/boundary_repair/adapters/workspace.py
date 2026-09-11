@@ -79,6 +79,7 @@ def extract_sources(archive: Path, destination: Path, max_bytes: int) -> None:
                         raise ValidationError('truncated_archive_member')
                     target.write(chunk)
                     remaining -= len(chunk)
+            output.chmod(0o755 if item.mode & 0o111 else 0o644)
     if not seen:
         raise ValidationError('empty_production_snapshot')
 

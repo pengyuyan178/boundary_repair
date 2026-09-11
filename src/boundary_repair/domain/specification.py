@@ -48,6 +48,7 @@ class EvidenceClaim:
     source_ids: tuple[str, ...]
     targets: tuple["ObservationKey", ...] = ()
     description: str = ""
+    entry_cases: tuple["EntryCase", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,7 @@ class EvidenceBundle:
     sources: tuple[SourceRef, ...]
     claims: tuple[EvidenceClaim, ...]
     choice_groups: tuple[tuple[str, ...], ...] = ()
+    interpretation_groups: tuple[tuple[tuple[str, ...], ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +87,35 @@ class ObservationKey:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservationInterface:
+    """Program-owned, snapshot-bound direct Boolean entry observation."""
+    interface_id: str
+    site: SourceSpan
+    parameters: tuple[str, ...]
+    snapshot_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class EntryCase:
+    """An evidence-proposed entry case, separate from the original behavioral target."""
+    interface: ObservationInterface
+    inputs: tuple[tuple[str, bool], ...]
+    expected: bool
+
+    @property
+    def target(self) -> ObservationKey:
+        """Compile the identity return projection in declared parameter order."""
+        context = Term('and', tuple(Term('eq', (Term('symbol', value=name), Term('literal', value=value)))
+                                    for name, value in self.inputs))
+        return ObservationKey(self.interface.site.symbol, 'return', context)
+
+    @property
+    def relation(self) -> Term:
+        """Compile a Boolean output equality without interpreting natural-language literals."""
+        return Term('eq', (Term('symbol', value='return'), Term('literal', value=self.expected)))
+
+
+@dataclass(frozen=True, slots=True)
 class Witness:
     """原始或经证明可达的情境；不能把臆造执行情境当作剪枝证明。"""
     witness_id: str
@@ -92,6 +123,7 @@ class Witness:
     assumptions: tuple[Term, ...]
     reachability: SolverStatus
     source_ids: tuple[str, ...]
+    interface: ObservationInterface | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +134,8 @@ class BehaviorConstraint:
     targets: tuple[ObservationKey, ...]
     relation: Term
     source_ids: tuple[str, ...]
+    description: str = ''
+    entry_cases: tuple[EntryCase, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +147,9 @@ class ContractSet:
     witnesses: tuple[Witness, ...]
     theory: InterpretationSpace
     diagnostics: tuple[str, ...] = ()
+    extraction_status: str = 'partial'
+    interpretation_groups: tuple[tuple[tuple[str, ...], ...], ...] = ()
+    sources: tuple[SourceRef, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

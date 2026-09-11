@@ -25,14 +25,16 @@ def symbol(name: str) -> Term:
     return Term("symbol", value=name)
 
 
-def term_from_json(value: object, depth: int = 0) -> Term:
+def term_from_json(value: object, depth: int = 0, path: str = 'term', canonical: bool = False) -> Term:
     """Parse the exact JSON AST schema, rejecting extra keys, deep trees and non-scalars."""
     if depth > 24 or not isinstance(value, dict) or set(value) - {"op", "args", "value"}:
-        raise ValidationError("invalid_term_shape")
+        raise ValidationError('invalid_term_shape:' + path)
     op = value.get("op")
     args = value.get("args", [])
-    if op not in ARITY or not isinstance(args, list):
-        raise ValidationError("unsupported_term_operator")
+    if not isinstance(op, str) or op not in ARITY or not isinstance(args, list):
+        raise ValidationError('unsupported_term_operator:' + path)
+    if canonical and set(value) != ({'op', 'value'} if op in {'literal', 'symbol'} else {'op', 'args'}):
+        raise ValidationError('invalid_term_shape:' + path)
     lo, hi = ARITY[op]
     if not lo <= len(args) <= hi:
         raise ValidationError("invalid_term_arity")
@@ -45,11 +47,14 @@ def term_from_json(value: object, depth: int = 0) -> Term:
         raise ValidationError("invalid_symbol")
     if op not in {"symbol", "literal"} and scalar is not None:
         raise ValidationError("operator_value_not_allowed")
-    return Term(op, tuple(term_from_json(a, depth + 1) for a in args), scalar)
+    return Term(op, tuple(term_from_json(a, depth + 1, f'{path}.args[{i}]', canonical) for i, a in enumerate(args)), scalar)
 
 
-def term_json(term: Term) -> dict[str, Any]:
+def term_json(term: Term, canonical: bool = False) -> dict[str, Any]:
     """Serialize a term without provider-specific objects or executable text."""
+    if canonical:
+        return ({'op': term.op, 'value': term.value} if term.op in {'literal', 'symbol'}
+                else {'op': term.op, 'args': [term_json(a, True) for a in term.args]})
     return {"op": term.op, "args": [term_json(a) for a in term.args], "value": term.value}
 
 
