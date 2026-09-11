@@ -290,7 +290,7 @@ function parseFile(file) {
       if (ts.isParenthesizedExpression(node)) return value(node.expression, env, expected, replacement, depth + 1);
       if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword) return lit(node.kind === ts.SyntaxKind.TrueKeyword);
       if (ts.isStringLiteralLike(node)) return lit(node.text);
-      if (ts.isNumericLiteral(node)) return lit(Number(node.text));
+      if (ts.isNumericLiteral(node)) return Number.isFinite(Number(node.text)) ? lit(Number(node.text)) : null;
       if (node.kind === ts.SyntaxKind.NullKeyword) return lit(null);
       if (ts.isIdentifier(node) && env.has(node.text)) {
         const definition = env.get(node.text);

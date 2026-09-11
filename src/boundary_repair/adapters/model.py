@@ -382,12 +382,18 @@ class FrozenModelAdapter:
                 'Authorization': 'Bearer ' + values[self.config.model.api_key_env], 'Content-Type': 'application/json'})
             response = connection.getresponse()
             if response.status != 200:
+                rejected_raw = response.read(16385)
+                excerpt = rejected_raw.decode('utf-8', errors='replace')
+                excerpt = excerpt.replace(values[self.config.model.api_key_env], '[redacted]')
+                excerpt = re.sub(r'(?i)bearer\s+[A-Za-z0-9._~+/=-]+|\bsk-[A-Za-z0-9_-]+', '[redacted]', excerpt)
                 write_json(trajectory / (call_name + '.error.json'), {
                     'stage': 'model_http', 'http_status': response.status,
-                    'response_format': body['response_format']['type']})
+                    'response_format': body['response_format']['type'],
+                    'response_excerpt': excerpt[:2048], 'response_truncated': len(rejected_raw) > 16384,
+                    'response_prefix_sha256': hashlib.sha256(rejected_raw).hexdigest()})
                 if response.status in {400, 422}:
                     try:
-                        rejected = json.loads(response.read(16384))
+                        rejected = json.loads(rejected_raw)
                     except (ValueError, UnicodeDecodeError):
                         rejected = {}
                     error = rejected.get('error', {}) if isinstance(rejected, dict) else {}

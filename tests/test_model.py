@@ -109,6 +109,22 @@ class ModelHTTPTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(ctx.budget.model_calls, 1)
 
+    def test_service_failure_records_bounded_redacted_cause_without_retry(self):
+        self.http_status = 503
+        self.payload = {'error': {'message': 'upstream unavailable local-dummy Bearer another-secret ' + 'x' * 20000}}
+        ctx = context()
+        with self.assertRaisesRegex(ExternalServiceError, '503'):
+            FrozenModelAdapter(self.config).complete(self.request, ctx)
+        trajectory = self.config.results_root / ctx.run_id / 'cases' / ctx.instance_id / 'trajectory'
+        record = json.loads(next(trajectory.glob('*.error.json')).read_text())
+        self.assertEqual(record['http_status'], 503)
+        self.assertTrue(record['response_truncated'])
+        self.assertLessEqual(len(record['response_excerpt']), 2048)
+        self.assertNotIn('local-dummy', json.dumps(record))
+        self.assertNotIn('another-secret', json.dumps(record))
+        self.assertIn('upstream unavailable', record['response_excerpt'])
+        self.assertEqual((len(self.calls), ctx.budget.model_calls), (1, 1))
+
     def test_raw_content_is_saved_before_domain_json_validation(self):
         self.payload['choices'][0]['message']['content'] = '{invalid-json'
         ctx = context()

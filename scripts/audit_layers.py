@@ -1,5 +1,6 @@
 """Audit frozen generation inputs without model calls, target execution or evaluation artifacts."""
 import argparse
+from collections import Counter
 from dataclasses import fields, is_dataclass
 from enum import Enum
 import json
@@ -14,6 +15,8 @@ from typing import get_args, get_origin, get_type_hints
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from boundary_repair.algorithms.rendering import TransactionRenderer, edit_transaction_schema
 from boundary_repair.domain.repair import PatchPlan
+from boundary_repair.adapters.storage import json_value
+from boundary_repair.domain.specification import BehaviorConstraint
 from boundary_repair.domain.runtime import RunContext, SearchPolicy, BudgetLedger, BudgetLimits
 from boundary_repair.domain.task import TaskInput
 from boundary_repair.ports import ModelResponse
@@ -60,7 +63,10 @@ def audit_context(batch: Path) -> dict:
         TransactionRenderer(model, request['max_completion_tokens']).render(task, plan, context)
         actual = json.loads(model.request.prompt)
         for key in ('obligations', 'soft_hypotheses', 'interpretation_groups', 'evidence_sources'):
-            assert original[key] == actual[key], (task.instance_id, key)
+            normalized = original[key]
+            if key in ('obligations', 'soft_hypotheses'):
+                normalized = [json_value(restore(BehaviorConstraint, value)) for value in normalized]
+            assert normalized == actual[key], (task.instance_id, key)
         assert model.request.output_schema == request['response_format']['json_schema']['schema']
         assert model.request.output_schema == edit_transaction_schema(plan.edit_scope)
         regions = {r['region_id']: r for r in actual['regions']}
@@ -88,16 +94,64 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--checkpoint', type=Path)
     parser.add_argument('--message', default='Record verified layer implementation')
+    parser.add_argument('--layer-metrics', action='store_true')
     args = parser.parse_args()
     if args.checkpoint is not None:
         print(json.dumps(checkpoint(args.checkpoint, args.message)))
         return
     if args.batch is None or args.output is None:
         parser.error('--batch and --output are required for context audits')
-    result = audit_context(args.batch)
+    result = audit_batch(args.batch) if args.layer_metrics else audit_context(args.batch)
     with args.output.open('x', encoding='utf-8') as stream:
         json.dump(result, stream, ensure_ascii=False, indent=2)
     print(json.dumps(result, ensure_ascii=True))
+
+
+def audit_batch(batch: Path) -> dict:
+    """Summarize persisted layer artifacts without reading evaluator outcomes or reference answers."""
+    from boundary_repair.algorithms.synthesis import scope_identity, scope_ranges
+    rows = []
+    for case in sorted((batch / 'cases').iterdir()):
+        def artifact(name):
+            path = case / 'trajectory' / name
+            return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+        contracts, localization, raw_plan = (artifact(name) for name in
+                                            ('contracts.json', 'localization.json', 'generation_plan.json'))
+        hard = contracts.get('must', []) + contracts.get('frames', [])
+        requests = [json.loads(path.read_text(encoding='utf-8')) for path in sorted((case / 'trajectory').glob('*.request.json'))]
+        evidence = next((json.loads(r['prompt']) for r in requests if r['schema_name'].startswith('evidence.')), {})
+        assessments = localization.get('assessments', [])
+        counts = dict(Counter(row['verdict'] for row in assessments))
+        plan = restore(PatchPlan, raw_plan) if raw_plan else None
+        read = plan.read_scope if plan else None
+        scope = plan.edit_scope if plan else None
+        errors = [json.loads(path.read_text(encoding='utf-8')) for path in sorted((case / 'trajectory').glob('*.error.json'))]
+        interfaces = evidence.get('observation_interfaces', [])
+        rows.append({'instance_id': case.name, 'layer1': {
+            'interfaces': len(interfaces), 'local_projections': sum(i.get('kind') == 'local_projection' for i in interfaces),
+            'extraction_status': contracts.get('extraction_status'), 'must': len(contracts.get('must', [])),
+            'frames': len(contracts.get('frames', [])), 'bound_hard': sum(bool(c.get('entry_cases')) for c in hard),
+            'entry_cases': sum(len(c.get('entry_cases', [])) for c in hard), 'witnesses': len(contracts.get('witnesses', [])),
+            'diagnostics': contracts.get('diagnostics', [])}, 'layer2': {
+            'analyzed': len(assessments), 'verdicts': counts,
+            'positive_certificates': sum(a['verdict'] == 'feasible' and bool(a.get('certificate')) for a in assessments),
+            'negative_certificates': sum(a['verdict'] == 'inexpressible' and bool(a.get('certificate')) for a in assessments)},
+            'layer3': {'candidates_compared': len(plan.scope_comparison) if plan else 0,
+                'generation_mode': plan.generation_mode if plan else None,
+                'scope_narrowed': bool(read and scope and scope_identity(read) != scope_identity(scope)),
+                'read_catalog_bytes': sum(b - a for _, a, b in scope_ranges(read)) if read else None,
+                'write_bytes': sum(b - a for _, a, b in scope_ranges(scope)) if scope else None,
+                'semantic_cost': json_value(plan.semantic_cost) if plan else None},
+            'requests': [{'schema': r['schema_name'], 'prompt_chars': len(r['prompt']),
+                          'context_manifest': json.loads(r['prompt']).get('context_manifest')} for r in requests],
+            'service_errors': [{'stage': e['stage'], 'http_status': e.get('http_status')} for e in errors]})
+    totals = {'cases': len(rows), 'interface_cases': sum(r['layer1']['interfaces'] > 0 for r in rows),
+              'bound_cases': sum(r['layer1']['entry_cases'] > 0 for r in rows),
+              'positive_certificates': sum(r['layer2']['positive_certificates'] for r in rows),
+              'negative_certificates': sum(r['layer2']['negative_certificates'] for r in rows),
+              'scope_narrowed_cases': sum(r['layer3']['scope_narrowed'] for r in rows),
+              'http_errors': dict(Counter(str(e['http_status']) for r in rows for e in r['service_errors']))}
+    return {'mode': 'persisted_layer_metrics', 'totals': totals, 'cases': rows, 'official_score': None}
 
 
 def checkpoint(snapshot: Path, message: str) -> dict:

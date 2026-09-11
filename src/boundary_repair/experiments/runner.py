@@ -82,13 +82,15 @@ def _frozen_generation_mode(case_root: Path) -> str | None:
         mode = plan.get("generation_mode")
     except (OSError, UnicodeDecodeError, ValidationError):
         return None
-    return mode if mode in {"certified", "scoped", "raw_evidence"} else None
+    return mode if mode in {"certified", "certified_projection", "scoped", "raw_evidence"} else None
 
 
 def _semantic_coverage(generation_mode: str | None, status: str) -> str | None:
     """Report complete local source semantics only after a certified patch is generated."""
     if generation_mode == "certified":
         return "complete" if status == "generated" else "partial"
+    if generation_mode == "certified_projection":
+        return "finite_entry_complete" if status == "generated" else "finite_entry_partial"
     if generation_mode in {"scoped", "raw_evidence"}:
         return "partial"
     return None

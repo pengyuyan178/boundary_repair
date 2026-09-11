@@ -265,6 +265,11 @@ def repair_guidance(plan: PatchPlan) -> dict:
             'output_symbols': boundary.output_symbols,
             'limited_interface_certificate': assessment.certificate,
         })
+        if assessment.proof_scope == 'finite_source_projection':
+            decisions[-1].update({'proof_scope': assessment.proof_scope,
+                                  'covered_entry_cases': assessment.covered_obligations,
+                                  'construction': assessment.construction,
+                                  'proof_ref': 'trajectory/localization.json#' + boundary.boundary_id})
     condition_scopes = {}
     for reason, ids in conditions.items():
         condition_scopes.setdefault(tuple(ids), []).append(reason)
@@ -277,7 +282,7 @@ def repair_guidance(plan: PatchPlan) -> dict:
                                     for (verdict, role), ids in deferred.items()],
             'unresolved_conditions': [{'boundary_ids': ids, 'reasons': reasons}
                                       for ids, reasons in condition_scopes.items()],
-            'scope_policy': ('selected_write_capabilities_with_full_read_context' if plan.scope_comparison
+            'scope_policy': ('selected_write_capabilities_with_required_source_context' if plan.scope_comparison
                              else 'all_declared_edit_capabilities_retained_no_file_exclusion'),
             'target_mapping': 'covering_or_contained_edit_units_not_equivalent_repair_grammars'}
 
@@ -298,6 +303,10 @@ def generation_handoff(plan: PatchPlan) -> dict:
                                       'policy': plan.selection_policy,
                                       'candidate_count': len(plan.scope_comparison),
                                       'coverage_meaning': 'source_intervention_not_semantic_satisfaction'}
+        if plan.semantic_cost is not None:
+            payload['scope_selection'].update({'semantic_cost': plain(plan.semantic_cost),
+                                              'coverage_meaning': 'declared_finite_entry_projections',
+                                              'joint_check_ref': 'trajectory/generation_plan.json#semantic_check'})
     if plan.boundary_guidance is not None:
         payload['repair_guidance'] = repair_guidance(plan)
         projected = {'boundary:' + g.assessment.boundary.boundary_id + ':' + reason

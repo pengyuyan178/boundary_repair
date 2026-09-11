@@ -270,6 +270,8 @@ def synthesize_finite(names: tuple[str, ...], cases: tuple[tuple[dict[str, Scala
                 for right in levels.get(size - left_size - 1, []):
                     if program_sort(right, sorts) == 'boolean':
                         candidates.extend(Term(op, (left, right)) for op in ('and', 'or'))
+                        if len(candidates) > 65536:
+                            return None
         for guard_size in range(1, size - 2):
             for yes_size in range(1, size - guard_size - 1):
                 no_size = size - guard_size - yes_size - 1
