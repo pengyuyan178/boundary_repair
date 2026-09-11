@@ -265,7 +265,7 @@ class EditBoundaryTests(unittest.TestCase):
         self.assertEqual(request.schema_name, 'edits.v4')
         prompt = json.loads(request.prompt)
         self.assertTrue(all('source' not in b and 'new_text' not in b for b in prompt['blocks']))
-        self.assertEqual(''.join(line['text'] for line in prompt['regions'][0]['lines']), SOURCE)
+        self.assertEqual(prompt['regions'][0]['source'], SOURCE)
         self.assertEqual(artifact.application_check, 'passed')
         for op in ('replace_lines', 'insert_at', 'replace_region'):
             with self.assertRaises(ValidationError):
@@ -282,12 +282,12 @@ class EditBoundaryTests(unittest.TestCase):
         plan = PatchPlan('positions', (), EditKind.FREEFORM, (), (), (), edit_scope=self.scope)
         TransactionRenderer(model).render(task(), plan, self.ctx)
         prompt = json.loads(model.complete.call_args.args[0].prompt)
-        lines = prompt['regions'][0]['lines']
-        self.assertEqual(''.join(line['text'] for line in lines), source)
-        self.assertEqual(len(lines), source.count('\n'))
+        visible = prompt['regions'][0]
+        self.assertEqual(visible['source'], source)
+        lines = [line + '\n' for line in visible['source'].split('\n')[:-1]]
         block = next(b for b in prompt['blocks'] if b['block_id'] == self.block().block_id)
-        displayed = ''.join(line['text'] for line in lines
-                            if block['start_inclusive']['line'] <= line['line'] < block['end_exclusive']['line'])
+        displayed = ''.join(lines[block['start_inclusive']['line'] - visible['start_line']:
+                                  block['end_exclusive']['line'] - visible['start_line']])
         self.assertEqual(displayed, METHOD.replace('"red"', '`red green`'))
 
     @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')

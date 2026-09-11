@@ -116,23 +116,23 @@ class V3ModelDouble:
                     {
                         "operation": "replace_text",
                         "target": region["region_id"],
-                        "new_text": "".join(line["text"] for line in region["lines"])
+                "new_text": region["source"]
                         + "/* visual explanation only */",
-                        "old_text": "".join(line["text"] for line in region["lines"]),
+                "old_text": region["source"],
                         "destination": "",
                     }
                 ]
             }
         edits = []
         for region in regions:
-            for line in region["lines"]:
-                if "red" in line["text"]:
+            for line in region["source"].splitlines(keepends=True):
+                if "red" in line:
                     edits.append(
                         {
                             "operation": "replace_text",
                             "target": region["region_id"],
-                            "new_text": line["text"].replace("red", "blue"),
-                            "old_text": line["text"],
+                        "new_text": line.replace("red", "blue"),
+                        "old_text": line,
                             "destination": "",
                         }
                     )

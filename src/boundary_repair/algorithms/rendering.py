@@ -2,6 +2,7 @@
 from dataclasses import dataclass, replace
 import json
 import re
+from pathlib import PurePosixPath
 
 from boundary_repair.domain.errors import ValidationError
 from boundary_repair.domain.repair import EditScope, EditTransaction, ExpressivityVerdict, HoleFilling, PatchPlan, SourceEdit, edit_operations
@@ -129,7 +130,7 @@ EDIT_SYSTEM = (
     'Choose the smallest sufficient block; related edits may span several files. '
     'insert_before and insert_after use the same block_id and insert at its fixed boundaries; '
     'new_text must include the necessary whitespace or separators. Never supply numeric edit coordinates. '
-    'The numbered lines and block start/end positions are read-only descriptions, not editable arguments. '
+    'Each region supplies exact source and start_line; block start/end positions are read-only descriptions. '
     'Positions use LF-delimited lines starting at one and Unicode-character columns starting at zero. '
     'For regions with edit_mode=text, use replace_text with the region_id and old_text copied exactly '
     'from that region. old_text must match exactly once, including whitespace and line endings. '
@@ -306,6 +307,46 @@ def generation_handoff(plan: PatchPlan) -> dict:
     return payload
 
 
+def generation_read_scope(plan: PatchPlan) -> EditScope:
+    """Select writable source, cited obligations and static dependencies from the exploration catalog."""
+    available = plan.read_scope or plan.edit_scope
+    writable = plan.edit_scope
+    if available is None or writable is None:
+        raise ValidationError('no_declared_edit_regions')
+    paths = {region.path for region in writable.regions}
+    cited = {sid for claim in plan.obligations + plan.soft_obligations for sid in claim.source_ids}
+    paths.update(source.locator.split('#chars=', 1)[0] for source in plan.evidence_sources
+                 if source.source_id in cited and '#chars=' in source.locator)
+    known = {region.path for region in available.regions}
+    pending = list(paths & known)
+    visited = set()
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        source = '\n'.join(region.source for region in available.regions if region.path == path)
+        imports = re.findall(r'''(?:\bfrom\s*|\brequire\s*\(\s*|\bimport\s*\(\s*|\bimport\s*)['"](\.[^'"]+)['"]''', source)
+        for imported in imports:
+            parts = []
+            for part in (PurePosixPath(path).parent / imported).parts:
+                if part == '..' and parts:
+                    parts.pop()
+                elif part not in {'.', '..'}:
+                    parts.append(part)
+            base = '/'.join(parts)
+            candidates = {base} | {base + suffix for suffix in ('.js', '.jsx', '.ts', '.tsx', '.json', '.scss', '.css')}
+            candidates |= {base + '/index' + suffix for suffix in ('.js', '.jsx', '.ts', '.tsx')}
+            pending.extend(candidates & known - visited)
+    paths = visited | {region.path for region in writable.regions}
+    regions = tuple(region for region in available.regions if region.path in paths)
+    present = {region.region_id for region in regions}
+    if not {region.region_id for region in writable.regions} <= present:
+        raise ValidationError('write_scope_missing_from_read_context')
+    return replace(available, regions=regions, files=tuple(file for file in available.files if file.path in paths),
+                   blocks=tuple(block for block in available.blocks if block.region_id in present), creation_roots=())
+
+
 @dataclass(frozen=True, slots=True)
 class TransactionRenderer:
     """One generation call against a pre-frozen, language-neutral edit capability set."""
@@ -318,12 +359,11 @@ class TransactionRenderer:
         if plan.edit_scope is None or not plan.edit_scope.regions:
             raise ValidationError('no_declared_edit_regions')
         scope = plan.edit_scope
-        reading = plan.read_scope or scope
+        reading = generation_read_scope(plan)
         writable_regions = {r.region_id: r.edit_mode for r in scope.regions}
         regions = [{'region_id': r.region_id, 'file_id': r.file_id, 'path': r.path,
                     'edit_mode': writable_regions.get(r.region_id, 'read_only'),
-                    'lines': [{'line': r.start_line + i, 'text': line}
-                              for i, line in enumerate(re.findall(r'[^\n]*\n|[^\n]+$', r.source))]}
+                    'start_line': r.start_line, 'source': r.source}
                    for r in reading.regions]
         files = {file.file_id: file for file in reading.files}
         windows = {region.region_id: region for region in reading.regions}
@@ -352,7 +392,17 @@ class TransactionRenderer:
         system = EDIT_SYSTEM
         if plan.boundary_guidance is not None:
             system += LOCALIZED_EDIT_SYSTEM
-        prompt = json.dumps(payload, ensure_ascii=False)
+        payload['context_manifest'] = {
+            'version': 'stage-context.v1', 'stage': 'generation',
+            'consumed_artifacts': ['contracts.json', 'localization.json', 'generation_plan.json'],
+            'audit_ref': 'trajectory/generation_plan.json',
+            'read_region_ids': [r.region_id for r in reading.regions],
+            'omitted_exploration_region_ids': [r.region_id for r in (plan.read_scope or scope).regions
+                                             if r.region_id not in windows],
+            'source_chars': sum(len(r.source) for r in reading.regions),
+            'source_policy': 'complete_write_regions_and_cited_or_imported_read_dependencies',
+        }
+        prompt = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
         response = self.model.complete(ModelRequest(system, prompt, task.assets, 'edits.v4',
                                                     self.response_tokens, schema), context)
         return parse_transaction(response.text)

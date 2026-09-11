@@ -216,12 +216,13 @@ class ScopeSelectionTests(unittest.TestCase):
         self.assertEqual({r.path for r in chosen.edit_scope.regions}, {'ui.js'})
         self.assertEqual(chosen.soft_obligations, contracts.may)
 
-    def test_selected_permissions_and_full_read_context_reach_real_request(self):
+    def test_selected_permissions_and_relevant_read_context_reach_real_request(self):
         chosen = self.select(self.pool())
         transaction = TransactionRenderer(self.model).render(self.task, chosen, self.ctx)
         request = self.model.requests[0]
         payload = json.loads(request.prompt)
-        self.assertEqual({r['path'] for r in payload['regions']}, {r.path for r in self.scope.regions})
+        self.assertEqual({r['path'] for r in payload['regions']}, {'ui.js'})
+        self.assertTrue(payload['context_manifest']['omitted_exploration_region_ids'])
         readonly = [r for r in payload['regions'] if r['path'] != 'ui.js']
         self.assertTrue(all(r['edit_mode'] == 'read_only' for r in readonly))
         self.assertTrue(all(not f['complete'] for f in payload['read_only_files']))

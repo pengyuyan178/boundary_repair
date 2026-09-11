@@ -197,7 +197,7 @@ class DecisionHandoffTests(unittest.TestCase):
         payload = json.loads(model.requests[0].prompt)
         for region in plan.edit_scope.regions:
             visible = next(r for r in payload['regions'] if r['region_id'] == region.region_id)
-            self.assertEqual(''.join(line['text'] for line in visible['lines']), region.source)
+            self.assertEqual(visible['source'], region.source)
         self.assertEqual(payload['files'], plain(plan.edit_scope.files))
         self.assertEqual(payload['creation_roots'], list(plan.edit_scope.creation_roots))
         self.assertEqual({b['block_id'] for b in payload['blocks']}, {b.block_id for b in plan.edit_scope.blocks})
@@ -214,7 +214,7 @@ class DecisionHandoffTests(unittest.TestCase):
         self.assertEqual(model.requests[0].system, EDIT_SYSTEM)
         self.assertEqual(list(payload), ['original_evidence', 'generation_mode', 'files', 'regions', 'blocks',
                                         'creation_roots', 'obligations', 'soft_hypotheses', 'interpretation_groups',
-                                        'evidence_sources', 'unresolved', 'scope_diagnostics'])
+                                        'evidence_sources', 'unresolved', 'scope_diagnostics', 'context_manifest'])
 
     def test_projection_is_deterministic_without_spending_budget(self):
         plan, ctx = self.plan(self.pool()), context()

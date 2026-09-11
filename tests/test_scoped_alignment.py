@@ -30,12 +30,12 @@ def target_source(prompt, target):
     block = next((b for b in prompt['blocks'] if b['block_id'] == target), None)
     region_id = block['region_id'] if block else target
     region = next(r for r in prompt['regions'] if r['region_id'] == region_id)
-    text = ''.join(line['text'] for line in region['lines'])
+    text = region['source']
     if block is None:
         return text
     offsets = []
     for position in (block['start_inclusive'], block['end_exclusive']):
-        offsets.append(sum(len(line['text']) for line in region['lines'] if line['line'] < position['line'])
+        offsets.append(sum(len(line) + 1 for line in text.split('\n')[:position['line'] - region['start_line']])
                        + position['column'])
     return text[offsets[0]:offsets[1]]
 
