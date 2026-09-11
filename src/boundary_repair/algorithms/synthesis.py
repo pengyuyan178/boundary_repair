@@ -6,7 +6,7 @@ import json
 from boundary_repair.domain.errors import NoAdmissiblePatch, ValidationError
 from boundary_repair.domain.repair import (
     BoundaryGuidance, EditScope, ExpressivityVerdict, HoleFilling, LocalizationResult, PatchPlan,
-    RepairBoundary, PlanAssessment, ScopeCost, SynthesisResult,
+    RepairBoundary, PlanAssessment, ScopeCost, SemanticScopeCost, SyntaxHole, SynthesisResult,
 )
 from boundary_repair.domain.runtime import RunContext
 from boundary_repair.domain.specification import ContractSet, Coverage
@@ -262,6 +262,23 @@ class ScopeSynthesis:
         from boundary_repair.domain.repair import EditRegion, EditTransaction, SourceEdit
         import hashlib
         scope = self.program.source_scope(snapshot, context, task.problem_statement)
+        projected = tuple(a for a in localization.assessments if a.verdict == ExpressivityVerdict.FEASIBLE
+                          and a.proof_scope == 'finite_source_projection' and a.certificate
+                          and a.proof is not None and a.construction is not None and len(a.boundary.sites) == 1)
+        hard = contracts.must + contracts.frames
+        if (projected and contracts.must and contracts.extraction_status != 'unavailable'
+                and all(c.entry_cases and all(case.interface.kind == 'local_projection' for case in c.entry_cases)
+                        for c in hard)):
+            plans = self.projection_plans(contracts, scope, localization, projected, snapshot, context)
+            plan = self.select_projection_scope(plans, contracts, context)
+            self.program.freeze_plan(plan, context)
+            if plan.generation_mode == 'certified_projection':
+                transaction = EditTransaction(tuple(SourceEdit('replace_region', f.hole_id, f.source_text)
+                                                     for f in plan.fixed_fillings))
+            else:
+                transaction = TransactionRenderer(self.model, self.response_tokens).render(task, plan, context)
+            patch = self.program.compile(task, plan, transaction, snapshot, context)
+            return SynthesisResult(plan, patch, plan.unresolved)
         feasible = LocalizationResult(tuple(a for a in localization.assessments
                                            if a.verdict == ExpressivityVerdict.FEASIBLE))
         plans = self.enumerate_plans(contracts, feasible, snapshot, context, task.problem_statement, allow_empty=True) if feasible.assessments else ()
@@ -291,6 +308,105 @@ class ScopeSynthesis:
             transaction = TransactionRenderer(self.model, self.response_tokens).render(task, plan, context)
         patch = self.program.compile(task, plan, transaction, snapshot, context)
         return SynthesisResult(plan, patch, plan.unresolved)
+
+    def projection_plans(self, contracts: ContractSet, scope: EditScope, localization: LocalizationResult,
+                         assessments: tuple, snapshot: RepositorySnapshot, context: RunContext) -> tuple[PatchPlan, ...]:
+        """Compose disjoint finite constructions with companion edits under the shared candidate budget."""
+        from boundary_repair.domain.repair import EditRegion
+        base = scoped_localization_plan(contracts, scope, localization, snapshot, context)
+        base = replace(base, read_scope=scope)
+        required = {f'{claim.constraint_id}:{number}' for claim in contracts.must + contracts.frames
+                    for number in range(len(claim.entry_cases))}
+        options, identities = [], set()
+        for assessment in assessments:
+            site = assessment.boundary.sites[0]
+            identity = (site, assessment.construction)
+            if identity not in identities:
+                identities.add(identity)
+                options.append(assessment)
+
+        def disjoint(left: object, right: object) -> bool:
+            """Reject compositions whose exact source interventions overlap."""
+            a, b = left.boundary.sites[0], right.boundary.sites[0]
+            return a.path != b.path or a.end_byte <= b.start_byte or b.end_byte <= a.start_byte
+
+        plans, seen, kinds = [base], set(), set()
+        files = {file.path: file for file in scope.files}
+        for seed in options:
+            if context.budget.patch_candidates >= context.budget.limits.max_patch_candidates:
+                break
+            chosen, covered = [seed], set(seed.covered_obligations)
+            while not required <= covered:
+                context.budget.check_deadline()
+                candidates = [(len(set(a.covered_obligations) - covered), -a.boundary.sites[0].node_count, -rank, a)
+                              for rank, a in enumerate(options) if all(disjoint(a, b) for b in chosen)]
+                if not candidates or max(candidates, key=lambda row: row[:3])[0] == 0:
+                    break
+                additional = max(candidates, key=lambda row: row[:3])[3]
+                chosen.append(additional)
+                covered.update(additional.covered_obligations)
+            identity = tuple(sorted((a.boundary.sites[0].path, a.boundary.sites[0].start_byte,
+                                     a.boundary.sites[0].end_byte, a.construction) for a in chosen))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            new_kinds = {a.boundary.edit_kind for a in chosen} - kinds
+            if context.budget.ideas + len(new_kinds) > context.budget.limits.max_ideas:
+                continue
+            context.budget.claim_ideas(len(new_kinds))
+            kinds.update(new_kinds)
+            context.budget.claim_candidates()
+            key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:16]
+            holes, fillings, regions = [], [], []
+            for number, assessment in enumerate(chosen):
+                site = assessment.boundary.sites[0]
+                hole_id = f'projection:{key}:{number}'
+                data, start, end = source_slice(snapshot.root, site)
+                holes.append(SyntaxHole(hole_id, site, 'finite-expression',
+                                        tuple(f.feature_id for f in assessment.required_features)))
+                fillings.append(HoleFilling(hole_id, assessment.construction))
+                regions.append(EditRegion(hole_id, files[site.path].file_id, site.path, start, end, site.start_line,
+                                          data[start:end].decode('utf-8'), hashlib.sha256(data[start:end]).hexdigest(),
+                                          len(data[:start].decode('utf-8'))))
+            strong = EditScope(tuple(replace(files[path], complete=False) for path in sorted({r.path for r in regions})),
+                               tuple(regions), (), ('finite_projection_constructions_only',))
+            plan = replace(base, plan_id='projection:' + key, boundary_ids=tuple(a.boundary.boundary_id for a in chosen),
+                           edit_kind=chosen[0].boundary.edit_kind, holes=tuple(holes), edit_scope=strong,
+                           generation_mode='certified_projection', fixed_fillings=tuple(fillings),
+                           unresolved=('finite_entry_domain_only', 'entry_case_evidence_interpretation_not_verified',
+                                       'JSX_construction_not_browser_visibility', 'candidate_pool_minimum_not_global_minimum'))
+            checked = self.program.assess_projection_plan(plan, snapshot, context)
+            plans.append(replace(plan, semantic_check=checked, effects=checked.effects))
+        return tuple(plans)
+
+    def select_projection_scope(self, plans: tuple[PatchPlan, ...], contracts: ContractSet,
+                                context: RunContext) -> PatchPlan:
+        """Rank joint-checked finite plans by semantic obligations before structural size."""
+        ranked, comparisons = [], []
+        for rank, plan in enumerate(plans):
+            context.budget.check_deadline()
+            checked = plan.semantic_check
+            covered = set(checked.covered) if checked else set()
+            must = tuple(c.constraint_id for c in contracts.must if c.constraint_id not in covered)
+            frames = tuple(c.constraint_id for c in contracts.frames if c.constraint_id not in covered)
+            extra = len({e.target.entity_id + ':' + e.target.property_name for e in checked.effects
+                         if e.relation.value == 'effect:possible_extra_property'}) if checked else 1
+            semantic = SemanticScopeCost(len(must), len(frames), len(frames), extra, 0,
+                                         checked.ast_nodes if checked else 0)
+            ranges = scope_ranges(plan.edit_scope)
+            size = sum(end - start for _, start, end in ranges)
+            legacy = ScopeCost(len(must), 0, len(must), 0, len(frames), int(checked is None),
+                               sum(f.complete for f in plan.edit_scope.files) + len(plan.edit_scope.creation_roots), 0, size)
+            targets = tuple(h.hole_id for h in plan.holes) or tuple(b.block_id for b in plan.edit_scope.blocks)
+            comparisons.append(PlanAssessment(plan.plan_id, plan.boundary_ids, targets, ranges, legacy,
+                                              must, (), frames, (), rank, semantic))
+            if checked is None or (not checked.unresolved and not checked.violated and checked.baseline_mismatches
+                                   and not must and not frames):
+                ranked.append((semantic, rank, plan.plan_id, replace(plan, cost=legacy, semantic_cost=semantic)))
+        winner = min(ranked, key=lambda row: row[:3])[3]
+        comparisons.sort(key=lambda row: (row.semantic_cost, row.localization_rank, row.plan_id))
+        return replace(winner, scope_comparison=tuple(comparisons),
+                       selection_policy='semantic-scope-v1:U_req,U_frame,R_protected,S_extra,N_invented,N_AST')
 
     def enumerate_plans(self, contracts: ContractSet, localization: LocalizationResult,
                         snapshot: RepositorySnapshot, context: RunContext, query: str = '',

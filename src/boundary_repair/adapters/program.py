@@ -11,9 +11,9 @@ from boundary_repair.adapters.frontend import analyze_sources, parse_sources
 from boundary_repair.adapters.repository import SourceRepository, PatchCompiler, bind_edit_blocks
 from boundary_repair.config import ExperimentConfig
 from boundary_repair.domain.errors import NoAdmissiblePatch, ValidationError
-from boundary_repair.domain.repair import EditScope, EditTransaction, Effect, HoleFilling, LocalRepairModel, PatchArtifact, PatchPlan, ProofAssumptions, RepairBoundary
+from boundary_repair.domain.repair import EditScope, EditTransaction, Effect, HoleFilling, LocalRepairModel, PatchArtifact, PatchPlan, PlanSemantics, ProofAssumptions, RepairBoundary, SourceEdit
 from boundary_repair.domain.runtime import RunContext
-from boundary_repair.domain.specification import Coverage, ObservationInterface, ObservationKey, SolverStatus, Term, Witness
+from boundary_repair.domain.specification import ClaimKind, Coverage, ObservationInterface, ObservationKey, SolverStatus, Term, Witness
 from boundary_repair.domain.task import ProgramIndex, RepositorySnapshot, SourceSpan, TaskInput
 from boundary_repair.kernel.files import allowed_source, source_slice, tree_digest
 from boundary_repair.kernel.terms import evaluate, literal, literal_assignments, symbol, term_from_json, typed_key, walk, symbols
@@ -53,7 +53,16 @@ class ProgramAdapter:
 
     def compile(self, task: TaskInput, plan: PatchPlan, transaction: EditTransaction,
                 snapshot: RepositorySnapshot, context: RunContext) -> PatchArtifact:
-        """Delegate language-neutral transaction validation to the shared patch compiler."""
+        """Enforce fixed constructions before shared exact-base transaction validation."""
+        if plan.generation_mode == 'certified_projection':
+            expected = EditTransaction(tuple(SourceEdit('replace_region', f.hole_id, f.source_text)
+                                             for f in plan.fixed_fillings))
+            if not plan.fixed_fillings or transaction != expected:
+                raise ValidationError('projection_transaction_differs_from_certificate')
+            checked = self.assess_projection_plan(plan, snapshot, context)
+            if (checked != plan.semantic_check or checked.unresolved or checked.violated
+                    or not checked.baseline_mismatches):
+                raise ValidationError('joint_projection_certificate_invalid')
         return PatchCompiler(self.config).compile(task, plan, transaction, snapshot, context)
 
     def index(self, snapshot: RepositorySnapshot, context: RunContext) -> ProgramIndex:
@@ -268,6 +277,13 @@ class ProgramAdapter:
                 complete = False
                 diagnostics.append('unreachable_scalar_projection:' + witness.witness_id)
                 continue
+            affected = '$edit' in symbols(expression) or any('$edit' in symbols(g) for g in conditions)
+            baseline_reached = all(program_evaluate(g, values) for g in base_conditions)
+            baseline_expression = program_term(observation['expression'])
+            baseline = bool(baseline_reached and program_evaluate(baseline_expression, values)) if observation['projection'] == 'presence' else program_evaluate(baseline_expression, values)
+            if not affected and typed_key(baseline) != typed_key(witness.expected_values[0]):
+                diagnostics.append('outside_interface_unresolved:' + witness.witness_id)
+                continue
             admissible = []
             for value in domain:
                 environment = {**values, '$edit': value}
@@ -298,6 +314,130 @@ class ProgramAdapter:
             tuple(diagnostics), tuple(allowed), tuple(w.witness_id for w in actual), 'finite_source_projection',
             literals, atoms, edit['output_sort'], tuple(domain))
 
+    def assess_projection_plan(self, plan: PatchPlan, snapshot: RepositorySnapshot,
+                               context: RunContext) -> PlanSemantics:
+        """Reparse joint pure constructions and check every sourced entry in the finite domain."""
+        self.index(snapshot, context)
+        fills = {f.hole_id: f.source_text for f in plan.fixed_fillings if f.operation == 'replace'}
+        if len(fills) != len(plan.fixed_fillings) or set(fills) != {h.hole_id for h in plan.holes}:
+            raise ValidationError('projection_fillings_must_match_holes')
+        edits, originals = {}, {}
+        for hole in plan.holes:
+            data, start, end = source_slice(snapshot.root, hole.site)
+            if self.projection_model(hole.site, snapshot, context) is None:
+                raise ValidationError('unregistered_projection_edit')
+            originals[hole.site.path] = data
+            edits.setdefault(hole.site.path, []).append((start, end, fills[hole.hole_id].encode('utf-8')))
+        sources = []
+        for path, ranges in edits.items():
+            ranges.sort()
+            if any(a[1] > b[0] for a, b in zip(ranges, ranges[1:])):
+                raise ValidationError('overlapping_projection_edits')
+            data = originals[path]
+            for start, end, replacement in reversed(ranges):
+                data = data[:start] + replacement + data[end:]
+            sources.append({'path': path, 'source': data.decode('utf-8')})
+        parsed = analyze_sources(sources, self.config, context)
+        updated = {row['path']: row for row in parsed['files']}
+        if any(row.get('syntax_status') != 'passed' for row in updated.values()):
+            return PlanSemantics(unresolved=('joint_projection_syntax_invalid',))
+
+        def adjusted(path: str, start: int, end: int) -> tuple[int, int]:
+            """Map an original enclosing observer to coordinates after disjoint expression edits."""
+            ranges = edits.get(path, ())
+            return (start + sum(len(text) - (b - a) for a, b, text in ranges if b <= start),
+                    end + sum(len(text) - (b - a) for a, b, text in ranges if a < end))
+
+        def match_observer(path: str, observation: dict) -> tuple[dict, dict] | None:
+            """Match a projection by exact shifted source span and property, never by symbol alone."""
+            if path not in updated:
+                return None
+            site = observation['site']
+            start, end = adjusted(path, site['start_byte'], site['end_byte'])
+            return next(((model, item) for model in updated[path].get('local_models', ())
+                         for item in model['observations'] if item['property_name'] == observation['property_name']
+                         and (item['site']['start_byte'], item['site']['end_byte']) == (start, end)), None)
+
+        def project(model: dict, observation: dict, values: dict) -> tuple[bool, object]:
+            """Evaluate only a valid declared scalar projection; missing premises remain unknown."""
+            sorts = {item['name']: item['sort'] for item in model['inputs']}
+            terms = tuple(program_term(raw) for raw in [observation['expression'], *observation['conditions']])
+            if (not set(sorts) <= set(values) or any(program_sort(literal(values[n]), {}) != s for n, s in sorts.items())
+                    or any(program_sort(term, sorts) is None for term in terms)
+                    or (any(node.op == 'regex_test' for term in terms for node in walk(term))
+                        and any(isinstance(value, str) and not value.isascii() for value in values.values()))):
+                return False, None
+            reached = all(program_evaluate(term, values) for term in terms[1:])
+            if observation['projection'] == 'presence':
+                return True, bool(reached and program_evaluate(terms[0], values))
+            return (True, program_evaluate(terms[0], values)) if reached else (False, None)
+
+        directory = {item.interface_id: item for item in self.observation_interfaces(snapshot, context)}
+        models = {hashlib.sha256(json.dumps(model, sort_keys=True).encode()).hexdigest(): (row['path'], model)
+                  for row in self._data['files'] for model in row.get('local_models', ())}
+        covered, violated, unresolved, mismatches, effects = [], [], [], [], []
+        bound_ids = set()
+        for claim in plan.obligations:
+            if not claim.entry_cases:
+                unresolved.append(claim.constraint_id)
+                continue
+            statuses = []
+            for case in claim.entry_cases:
+                interface = case.interface
+                bound_ids.add(interface.interface_id)
+                if (interface.kind != 'local_projection' or directory.get(interface.interface_id) != interface
+                        or not claim.source_ids):
+                    statuses.append('unknown')
+                    continue
+                key, number = interface.summary_key.rsplit(':', 1)
+                path, model = models[key]
+                observation = model['observations'][int(number)]
+                valid, original = project(model, observation, dict(case.inputs))
+                found = match_observer(path, observation) if path in updated else (model, observation)
+                if not valid or found is None:
+                    statuses.append('unknown')
+                    continue
+                checked, result = project(*found, dict(case.inputs))
+                baseline_wrong = typed_key(original) != typed_key(case.expected)
+                if baseline_wrong:
+                    mismatches.append(claim.constraint_id)
+                if baseline_wrong and claim.kind == ClaimKind.FRAME:
+                    statuses.append('unknown')
+                elif not checked:
+                    statuses.append('unknown')
+                else:
+                    statuses.append('valid' if typed_key(result) == typed_key(case.expected) else 'violated')
+                    effects.append(Effect(case.target, symbol('effect:changed' if typed_key(result) != typed_key(original)
+                                                             else 'effect:preserved'), Coverage.COMPLETE))
+            if 'unknown' in statuses:
+                unresolved.append(claim.constraint_id)
+            if 'violated' in statuses:
+                violated.append(claim.constraint_id)
+            if all(status == 'valid' for status in statuses):
+                covered.append(claim.constraint_id)
+        for interface in directory.values():
+            if interface.kind != 'local_projection' or interface.site.path not in updated or interface.interface_id in bound_ids:
+                continue
+            key, number = interface.summary_key.rsplit(':', 1)
+            path, model = models[key]
+            before = model['observations'][int(number)]
+            found = match_observer(path, before)
+            if found is None or any(before[k] != found[1][k] for k in ('expression', 'conditions')):
+                effects.append(Effect(ObservationKey(interface.interface_id, interface.property_name, literal(True)),
+                                      symbol('effect:possible_extra_property'), Coverage.PARTIAL))
+        nodes = 0
+        for hole in plan.holes:
+            start, end = adjusted(hole.site.path, hole.site.start_byte, hole.site.end_byte)
+            counts = [site['node_count'] for site in updated[hole.site.path].get('locations', ())
+                      if (site['start_byte'], site['end_byte']) == (start, end)]
+            if not counts:
+                unresolved.append('unmapped_construction_ast:' + hole.hole_id)
+            else:
+                nodes += max(counts)
+        return PlanSemantics(tuple(dict.fromkeys(covered)), tuple(dict.fromkeys(violated)),
+                             tuple(dict.fromkeys(unresolved)), tuple(dict.fromkeys(mismatches)),
+                             tuple(dict.fromkeys(effects)), nodes)
+
     def effects(self, plan: PatchPlan, snapshot: RepositorySnapshot, context: RunContext) -> tuple[Effect, ...]:
         """A5: return a local property effect where justified, otherwise explicit unknown effects.
 
@@ -305,6 +445,8 @@ class ProgramAdapter:
         noninterference. Consumer edits and object sharing currently use conservative partial
         effects. Empty impact is never inferred from unsupported analysis.
         """
+        if plan.semantic_check is not None:
+            return plan.semantic_check.effects
         result = []
         for hole in plan.holes:
             source_slice(snapshot.root, hole.site)

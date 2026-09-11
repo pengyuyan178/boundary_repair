@@ -429,28 +429,47 @@ function parseFile(file) {
     else returned(fn.body, definitions, []);
     if (!valid || !observations.length || sorts.size > 8 || observations.length > 32) return;
     if ([...sorts.keys()].some(path => [...sorts.keys()].some(other => other.startsWith(path + '.')))) return;
-    const edits = [];
-    for (const [replacement, candidate] of candidates) {
-      const continuations = [];
-      for (let index = 0; index < observations.length; index++) {
-        const observer = observations[index];
+    const grouped = new Map();
+    for (const observer of observations) {
+      const identity = key(observer.node) + ':' + observer.property;
+      if (!grouped.has(identity)) grouped.set(identity, []);
+      grouped.get(identity).push(observer);
+    }
+    const groups = [...grouped.values()];
+    function projection(group, replacement = null) {
+      const parts = [];
+      for (const observer of group) {
         const expression = observer.projection === 'presence' ? presence(observer.node, observer.env, observer.tag, replacement) :
           value(observer.node, observer.env, observer.sort, replacement);
         const conditions = observer.guards.map(g => {
           const term = value(g.node, g.env, 'boolean', replacement);
           return term && (g.positive ? term : {op: 'not', args: [term]});
         });
-        if (!expression || !conditions.every(Boolean)) continue;
-        continuations.push({observation: index, expression, conditions});
+        if (!expression || !conditions.every(Boolean)) return null;
+        parts.push({expression, guard: {op: 'and', args: conditions}});
+      }
+      if (group[0].projection === 'presence') return {expression: {op: 'or', args: parts.map(p =>
+        ({op: 'and', args: [p.guard, p.expression]}))}, conditions: []};
+      let expression = parts[parts.length - 1].expression;
+      for (let index = parts.length - 2; index >= 0; index--)
+        expression = {op: 'ite', args: [parts[index].guard, parts[index].expression, expression]};
+      return {expression, conditions: [{op: 'or', args: parts.map(p => p.guard)}]};
+    }
+    const edits = [];
+    for (const [replacement, candidate] of candidates) {
+      const continuations = [];
+      for (let index = 0; index < groups.length; index++) {
+        const summary = projection(groups[index], replacement);
+        if (summary) continuations.push({observation: index, ...summary});
       }
       const expression = value(candidate.node, candidate.env, candidate.sort);
       const site = expression ? span(candidate.node, candidate.guard ? 'LocalGuard' : 'LocalValue', name) : null;
-      if (site && continuations.length === observations.length) edits.push({site, output_sort: candidate.sort, expression, continuations});
+      if (site && continuations.length === groups.length) edits.push({site, output_sort: candidate.sort, expression, continuations});
     }
     if (!edits.length || sorts.size > 8) return;
     const model = {owner: ownerSite, name, inputs: [...sorts].sort().map(([name, sort]) => ({name, sort})), edits,
-      observations: observations.map(o => ({site: o.site, property_name: o.property, output_sort: o.sort,
-        projection: o.projection, expression: o.expression, conditions: o.conditions})),
+      observations: groups.map(group => ({site: group[0].site, property_name: group[0].property, output_sort: group[0].sort,
+        projection: group[0].projection, ...projection(group)})),
       premises: ['pure_declared_entry_model', 'plain_data_without_getters_or_proxies',
         'JSX_construction_projection_not_browser_visibility', 'declared_scalar_sorts_not_all_JavaScript_inputs']};
     if (reserveMetadata(Buffer.byteLength(JSON.stringify(model), 'utf8'))) localModels.push(model);

@@ -111,14 +111,16 @@ class EntryCase:
 
     @property
     def target(self) -> ObservationKey:
-        """Compile the identity return projection in declared parameter order."""
+        """Compile a source-distinct observation in declared parameter order."""
         context = Term('and', tuple(Term('eq', (Term('symbol', value=name), Term('literal', value=value)))
                                     for name, value in self.inputs))
-        return ObservationKey(self.interface.site.symbol, self.interface.property_name, context)
+        entity = (self.interface.interface_id if self.interface.kind == 'local_projection'
+                  else self.interface.site.symbol)
+        return ObservationKey(entity, self.interface.property_name, context)
 
     @property
     def relation(self) -> Term:
-        """Compile a Boolean output equality without interpreting natural-language literals."""
+        """Compile a scalar output equality without interpreting natural-language literals."""
         return Term('eq', (Term('symbol', value='return'), Term('literal', value=self.expected)))
 
 

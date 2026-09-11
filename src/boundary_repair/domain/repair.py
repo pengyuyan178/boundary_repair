@@ -156,6 +156,28 @@ class ScopeCost:
     edit_bytes: int
 
 
+@dataclass(frozen=True, slots=True, order=True)
+class SemanticScopeCost:
+    """Lexicographic cost over declared behavior obligations and property-level effects."""
+    unresolved_requirements: int
+    unresolved_frames: int
+    protected_risk: int
+    extra_properties: int
+    invented_constants: int
+    ast_nodes: int
+
+
+@dataclass(frozen=True, slots=True)
+class PlanSemantics:
+    """Static joint validation of planned constructions within the recorded projection domain."""
+    covered: tuple[str, ...] = ()
+    violated: tuple[str, ...] = ()
+    unresolved: tuple[str, ...] = ()
+    baseline_mismatches: tuple[str, ...] = ()
+    effects: tuple[Effect, ...] = ()
+    ast_nodes: int = 0
+
+
 @dataclass(frozen=True, slots=True)
 class PlanAssessment:
     """Auditable alternatives scored before one selected plan is sent to generation."""
@@ -169,6 +191,7 @@ class PlanAssessment:
     touched_frames: tuple[str, ...]
     unmapped_frames: tuple[str, ...]
     localization_rank: int
+    semantic_cost: SemanticScopeCost | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +214,9 @@ class PatchPlan:
     read_scope: "EditScope | None" = None
     scope_comparison: tuple[PlanAssessment, ...] = ()
     selection_policy: str = ''
+    semantic_cost: SemanticScopeCost | None = None
+    fixed_fillings: tuple['HoleFilling', ...] = ()
+    semantic_check: PlanSemantics | None = None
 
 
 @dataclass(frozen=True, slots=True)

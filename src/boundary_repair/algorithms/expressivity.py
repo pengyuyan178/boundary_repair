@@ -48,7 +48,9 @@ class ExpressivityLocalization:
             cases = {f'{claim.constraint_id}:{number}': (claim, case)
                      for claim in contracts.must + contracts.frames for number, case in enumerate(claim.entry_cases)}
             valid = True
-            for witness in model.witnesses:
+            for witness in contracts.witnesses:
+                if witness.interface is None or witness.interface.kind != 'local_projection':
+                    continue
                 obligation = cases.get(witness.witness_id)
                 if obligation is None:
                     valid = False

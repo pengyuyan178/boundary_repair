@@ -12,6 +12,7 @@ from boundary_repair.domain.repair import (
     LocalizationResult,
     PatchArtifact,
     PatchPlan,
+    PlanSemantics,
     RepairBoundary,
     SynthesisResult,
 )
@@ -89,6 +90,11 @@ class ProgramPort(RepositoryPort, PatchPort, Protocol):
         self, snapshot: RepositorySnapshot, context: RunContext,
     ) -> tuple[ObservationInterface, ...]:
         """Declare exact code observations supported within the frozen evidence scope."""
+        ...
+
+    def assess_projection_plan(self, plan: PatchPlan, snapshot: RepositorySnapshot,
+                               context: RunContext) -> PlanSemantics:
+        """Check the joint constructions against the declared original entry projections."""
         ...
 
     def summarize(

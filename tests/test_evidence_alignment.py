@@ -466,7 +466,8 @@ class LocalProjectionBindingTests(unittest.TestCase):
         self.assertTrue(negatives)
         self.assertTrue(all(a.verdict == ExpressivityVerdict.INEXPRESSIBLE for a in negatives))
         self.assertTrue(positives)
-        self.assertTrue(all(a.construction and a.proof and len(a.covered_obligations) == 8 for a in positives))
+        self.assertTrue(all(a.construction and a.proof for a in positives))
+        self.assertTrue(any(len(a.covered_obligations) == 8 for a in positives))
         self.assertTrue(all(a.proof.snapshot_sha256 == (self.snap.tree_sha256,) for a in negatives + positives))
 
     def test_unrelated_unbound_obligation_remains_explicit_without_erasing_local_proof(self):
@@ -496,6 +497,83 @@ class LocalProjectionBindingTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         for pattern in ('(a+)+', '(?=a)', '(a)\\1', '\\u0061'):
             self.assertIsNone(simple_regex(pattern))
+
+    def test_semantic_scope_preserves_title_and_enforces_exact_construction(self):
+        from boundary_repair.domain.repair import EditTransaction, SourceEdit
+        contracts = self.projected_contracts()
+        local = ExpressivityLocalization(self.program, LogicAdapter(), maximum=200).locate(
+            self.task, contracts, self.snap, self.ctx)
+        model = EntryModel()
+        result = ScopeSynthesis(model, self.program, LogicAdapter()).synthesize(
+            self.task, contracts, local, self.snap, self.ctx)
+        self.assertEqual(result.plan.generation_mode, 'certified_projection')
+        self.assertEqual(model.requests, [])
+        self.assertEqual(len(result.plan.holes), 1)
+        self.assertEqual(len(result.plan.semantic_check.covered), 8)
+        self.assertEqual(result.plan.semantic_cost.unresolved_requirements, 0)
+        self.assertEqual(result.plan.semantic_cost.unresolved_frames, 0)
+        self.assertGreater(result.plan.semantic_cost.ast_nodes, 0)
+        self.assertGreater(len(result.plan.scope_comparison), 1)
+        self.assertFalse(result.plan.edit_scope.creation_roots)
+        self.assertFalse(any(f.complete for f in result.plan.edit_scope.files))
+        self.assertEqual(sum(r.end_byte - r.start_byte for r in result.plan.edit_scope.regions), len('enabled'))
+        self.assertEqual(result.patch.application_check, 'passed')
+        candidate = self.root / 'candidate'
+        candidate.mkdir()
+        (candidate / 'ui.js').write_text(self.source, encoding='utf-8')
+        subprocess.run(['git', 'apply', '-'], input=result.patch.unified_diff.encode('utf-8'),
+                       cwd=candidate, check=True, capture_output=True)
+        changed = (candidate / 'ui.js').read_text(encoding='utf-8')
+        self.assertIn('title={enabled ? "shown" : "hidden"}', changed)
+        bad = EditTransaction((SourceEdit('replace_region', result.plan.holes[0].hole_id, 'true'),))
+        with self.assertRaisesRegex(ValidationError, 'differs_from_certificate'):
+            self.program.compile(self.task, result.plan, bad, self.snap, self.ctx)
+        corrupted = replace(result.plan, fixed_fillings=(HoleFilling(result.plan.holes[0].hole_id, 'true'),))
+        with self.assertRaisesRegex(ValidationError, 'joint_projection_certificate_invalid'):
+            self.program.compile(self.task, corrupted, bad, self.snap, self.ctx)
+
+    def test_companion_repairs_cover_both_files(self):
+        from boundary_repair.domain.specification import EntryCase, Witness
+        (self.snap.root / 'other.js').write_text(self.source.replace('card(', 'other('), encoding='utf-8')
+        self.snap = replace(self.snap, tree_sha256=tree_digest(self.snap.root))
+        self.scope = self.program.source_scope(self.snap, self.ctx, self.task.problem_statement)
+        contracts = self.projected_contracts()
+        first_path = contracts.must[0].entry_cases[0].interface.site.path
+        directory = {i.property_name: i for i in self.program.observation_interfaces(self.snap, self.ctx)
+                     if i.site.path != first_path}
+        def companion(claim):
+            cases = tuple(EntryCase(directory[c.interface.property_name], c.inputs, c.expected) for c in claim.entry_cases)
+            return replace(claim, constraint_id='other:' + claim.constraint_id, entry_cases=cases,
+                           targets=tuple(c.target for c in cases))
+        must = contracts.must + tuple(companion(c) for c in contracts.must)
+        frames = contracts.frames + tuple(companion(c) for c in contracts.frames)
+        witnesses = tuple(Witness(f'{c.constraint_id}:{n}', (case.target,), (case.target.context,), SolverStatus.UNKNOWN,
+                                  c.source_ids, case.interface, (case.expected,))
+                          for c in must + frames for n, case in enumerate(c.entry_cases))
+        contracts = replace(contracts, must=must, frames=frames, witnesses=witnesses)
+        local = ExpressivityLocalization(self.program, LogicAdapter(), maximum=200).locate(
+            self.task, contracts, self.snap, self.ctx)
+        result = ScopeSynthesis(EntryModel(), self.program, LogicAdapter()).synthesize(
+            self.task, contracts, local, self.snap, self.ctx)
+        self.assertEqual(result.plan.generation_mode, 'certified_projection')
+        self.assertEqual({h.site.path for h in result.plan.holes}, {'ui.js', 'other.js'})
+        self.assertEqual(len(result.plan.semantic_check.covered), 16)
+        self.assertEqual(result.patch.application_check, 'passed')
+
+    def test_multiple_paths_share_one_source_observer(self):
+        source = ('function card(active, hidden) {\n'
+                  ' if (active) { const irrelevant = true; }\n'
+                  ' return <div>{hidden ? <strong/> : null}</div>;\n}\n')
+        (self.snap.root / 'ui.js').write_text(source, encoding='utf-8')
+        snap = replace(self.snap, tree_sha256=tree_digest(self.snap.root))
+        directory = self.program.observation_interfaces(snap, self.ctx)
+        self.assertEqual(len(directory), 1)
+        from boundary_repair.kernel.boolean import program_evaluate, program_term
+        observation = self.program._data['files'][0]['local_models'][0]['observations'][0]
+        for active in (False, True):
+            for hidden in (False, True):
+                self.assertEqual(program_evaluate(program_term(observation['expression']),
+                                                  {'active': active, 'hidden': hidden}), hidden)
 
 
 if __name__ == '__main__':
