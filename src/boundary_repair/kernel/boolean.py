@@ -236,6 +236,8 @@ def program_source(term: Term) -> str:
         return str(term.value)
     if term.op == 'not':
         return '!(' + program_source(term.args[0]) + ')'
+    if term.op in {'and', 'or'} and not term.args:
+        return 'true' if term.op == 'and' else 'false'
     if term.op == 'ite':
         return '(' + ' ? '.join([program_source(term.args[0]),
             program_source(term.args[1]) + ' : ' + program_source(term.args[2])]) + ')'

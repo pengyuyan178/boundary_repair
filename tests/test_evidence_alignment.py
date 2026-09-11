@@ -575,6 +575,48 @@ class LocalProjectionBindingTests(unittest.TestCase):
                 self.assertEqual(program_evaluate(program_term(observation['expression']),
                                                   {'active': active, 'hidden': hidden}), hidden)
 
+    def test_branch_lexical_scope_matches_javascript(self):
+        from boundary_repair.kernel.boolean import program_evaluate, program_term
+        source = ('function label(active, hidden) { const text = active ? "on" : "off"; '
+                  'if (hidden) { const text = "shadow"; } return text; }')
+        (self.snap.root / 'ui.js').write_text(source, encoding='utf-8')
+        snap = replace(self.snap, tree_sha256=tree_digest(self.snap.root))
+        interfaces = self.program.observation_interfaces(snap, self.ctx)
+        self.assertEqual(len(interfaces), 1)
+        observation = self.program._data['files'][0]['local_models'][0]['observations'][0]
+        cases = [(False, False), (False, True), (True, False), (True, True)]
+        expected = json.loads(subprocess.check_output(['node', '-e', source +
+            ';console.log(JSON.stringify(' + json.dumps(cases) + '.map(v=>label(...v))))']))
+        actual = [program_evaluate(program_term(observation['expression']), {'active': active, 'hidden': hidden})
+                  for active, hidden in cases]
+        self.assertEqual(actual, expected)
+
+    def test_nested_jsx_attributes_require_their_branch(self):
+        from boundary_repair.kernel.boolean import program_evaluate, program_term
+        source = 'function card(active) { return <div>{active ? <b title="yes"/> : <i title="no"/>}</div>; }'
+        (self.snap.root / 'ui.js').write_text(source, encoding='utf-8')
+        snap = replace(self.snap, tree_sha256=tree_digest(self.snap.root))
+        directory = self.program.observation_interfaces(snap, self.ctx)
+        titles = [i for i in directory if i.property_name == 'jsx.attribute:title']
+        self.assertEqual(len(titles), 2)
+        self.assertEqual(len({i.interface_id for i in titles}), 2)
+        observers = self.program._data['files'][0]['local_models'][0]['observations']
+        for observer in (o for o in observers if o['property_name'] == 'jsx.attribute:title'):
+            for active in (False, True):
+                value = program_evaluate(program_term(observer['expression']), {'active': active})
+                reached = all(program_evaluate(program_term(g), {'active': active}) for g in observer['conditions'])
+                self.assertEqual(reached, active if value == 'yes' else not active)
+
+    def test_unresolved_initializers_and_temporal_dead_zones_have_no_projection(self):
+        sources = [
+            'function label(active) { const ignored = missingName; return active ? "on" : "off"; }',
+            'function label(active) { const text = active ? "on" : "off"; if(active) { return text; const text = "inner"; } return "off"; }',
+        ]
+        for source in sources:
+            (self.snap.root / 'ui.js').write_text(source, encoding='utf-8')
+            snap = replace(self.snap, tree_sha256=tree_digest(self.snap.root))
+            self.assertEqual(self.program.observation_interfaces(snap, self.ctx), ())
+
 
 if __name__ == '__main__':
     unittest.main()

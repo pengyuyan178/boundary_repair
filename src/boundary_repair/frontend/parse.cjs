@@ -242,7 +242,7 @@ function parseFile(file) {
               && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment)) return;
       ts.forEachChild(node, child => { purity.push(child); });
     }
-    const candidates = new Map(), observations = [];
+    const candidates = new Map(), observations = [], initializers = [];
     const lit = value => ({op: 'literal', value});
     const key = node => `${node.getStart(sf)}:${node.end}`;
     function access(node) {
@@ -263,6 +263,7 @@ function parseFile(file) {
       if (node.kind === ts.SyntaxKind.NullKeyword) return 'null';
       if (ts.isIdentifier(node) && env.has(node.text)) {
         const value = env.get(node.text);
+        if (!value.node) { valid = false; return null; }
         return infer(value.node, value.env, depth + 1);
       }
       const path = access(node);
@@ -294,6 +295,7 @@ function parseFile(file) {
       if (node.kind === ts.SyntaxKind.NullKeyword) return lit(null);
       if (ts.isIdentifier(node) && env.has(node.text)) {
         const definition = env.get(node.text);
+        if (!definition.node) { valid = false; return null; }
         const sort = infer(definition.node, definition.env) || expected;
         if (!replacement) remember(definition.node, definition.env, sort);
         return value(definition.node, definition.env, sort, replacement, depth + 1);
@@ -373,20 +375,20 @@ function parseFile(file) {
         expression, conditions});
     }
     function returned(node, env, guards) {
-      const stack = [node];
+      const stack = [[node, guards]];
       const scalar = infer(node, env);
       const returnSort = fn.type?.kind === ts.SyntaxKind.BooleanKeyword ? 'boolean' :
         fn.type?.kind === ts.SyntaxKind.StringKeyword ? 'string' : fn.type?.kind === ts.SyntaxKind.NumberKeyword ? 'number' : null;
       if (scalar && returnSort && scalar !== returnSort) { valid = false; return; }
       if (scalar) observe(node, env, guards, 'return', 'value', scalar);
       while (stack.length) {
-        const current = stack.pop();
+        const [current, currentGuards] = stack.pop();
         if (ts.isFunctionLike(current)) continue;
         if (ts.isJsxAttribute(current) && current.initializer) {
           const expr = ts.isJsxExpression(current.initializer) ? current.initializer.expression : current.initializer;
           const attribute = current.name.getText(sf);
           const sort = expr && (infer(expr, env) || (['hidden', 'disabled', 'checked', 'selected'].includes(attribute) ? 'boolean' : 'string'));
-          if (expr) observe(expr, env, guards, 'jsx.attribute:' + attribute, 'value', sort);
+          if (expr) observe(expr, env, currentGuards, 'jsx.attribute:' + attribute, 'value', sort);
         }
         if (ts.isJsxExpression(current) && current.expression && !ts.isJsxAttribute(current.parent)) {
           const tags = new Set(), nodes = [current.expression];
@@ -397,19 +399,30 @@ function parseFile(file) {
             if (!ts.isFunctionLike(child)) ts.forEachChild(child, nested => { nodes.push(nested); });
           }
           if (tags.size) for (const tag of [...tags].sort().slice(0, 8))
-            observe(current.expression, env, guards, 'jsx.children.contains:' + tag, 'presence', 'boolean', tag);
-          else observe(current.expression, env, guards, 'jsx.children.value', 'value', infer(current.expression, env) || 'string');
+            observe(current.expression, env, currentGuards, 'jsx.children.contains:' + tag, 'presence', 'boolean', tag);
+          else observe(current.expression, env, currentGuards, 'jsx.children.value', 'value', infer(current.expression, env) || 'string');
         }
-        ts.forEachChild(current, child => { stack.push(child); });
+        if (ts.isConditionalExpression(current)) {
+          stack.push([current.whenTrue, [...currentGuards, {node: current.condition, env, positive: true}]],
+            [current.whenFalse, [...currentGuards, {node: current.condition, env, positive: false}]]);
+        } else if (ts.isBinaryExpression(current) && [ts.SyntaxKind.AmpersandAmpersandToken,
+          ts.SyntaxKind.BarBarToken].includes(current.operatorToken.kind)) {
+          stack.push([current.left, currentGuards], [current.right, [...currentGuards,
+            {node: current.left, env, positive: current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken}]]);
+        } else ts.forEachChild(current, child => { stack.push([child, currentGuards]); });
       }
     }
-    function flow(statements, env, guards, depth = 0) {
+    function flow(statements, env, guards, depth = 0, continuations = []) {
       if (depth > 12) { valid = false; return; }
+      for (const statement of statements) if (ts.isVariableStatement(statement))
+        for (const declaration of statement.declarationList.declarations)
+          if (ts.isIdentifier(declaration.name)) env.set(declaration.name.text, {node: null, env: null});
       for (let index = 0; index < statements.length; index++) {
         const statement = statements[index];
         if (ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.Const)) {
           for (const declaration of statement.declarationList.declarations) {
             if (!ts.isIdentifier(declaration.name) || !declaration.initializer || !atomic(declaration.initializer)) { valid = false; return; }
+            initializers.push({node: declaration.initializer, env: new Map(env)});
             env.set(declaration.name.text, {node: declaration.initializer, env: new Map(env)});
           }
         } else if (ts.isReturnStatement(statement) && statement.expression) {
@@ -418,15 +431,21 @@ function parseFile(file) {
         } else if (ts.isIfStatement(statement)) {
           remember(statement.expression, env, 'boolean', true);
           const rest = statements.slice(index + 1);
-          const branch = part => !part ? rest : [...(ts.isBlock(part) ? part.statements : [part]), ...rest];
-          flow(branch(statement.thenStatement), new Map(env), [...guards, {node: statement.expression, env: new Map(env), positive: true}], depth + 1);
-          flow(branch(statement.elseStatement), new Map(env), [...guards, {node: statement.expression, env: new Map(env), positive: false}], depth + 1);
+          const branch = part => !part ? [] : [...(ts.isBlock(part) ? part.statements : [part])];
+          const after = [{statements: rest, env: new Map(env)}, ...continuations];
+          flow(branch(statement.thenStatement), new Map(env), [...guards, {node: statement.expression, env: new Map(env), positive: true}], depth + 1, after);
+          flow(branch(statement.elseStatement), new Map(env), [...guards, {node: statement.expression, env: new Map(env), positive: false}], depth + 1, after);
           return;
         } else if (!ts.isEmptyStatement(statement)) { valid = false; return; }
+      }
+      if (continuations.length) {
+        const [next, ...rest] = continuations;
+        flow(next.statements, new Map(next.env), guards, depth, rest);
       }
     }
     if (ts.isBlock(fn.body)) flow([...fn.body.statements], definitions, []);
     else returned(fn.body, definitions, []);
+    if (initializers.some(item => !value(item.node, item.env, infer(item.node, item.env)))) return;
     if (!valid || !observations.length || sorts.size > 8 || observations.length > 32) return;
     if ([...sorts.keys()].some(path => [...sorts.keys()].some(other => other.startsWith(path + '.')))) return;
     const grouped = new Map();
