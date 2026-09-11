@@ -421,7 +421,8 @@ class SpecificationRecoveryV3Tests(unittest.TestCase):
         self.assertEqual(result.theory.coverage.value, "partial")
         self.assertEqual(result.theory.consistency, SolverStatus.UNKNOWN)
         self.assertFalse(result.must + result.may + result.frames + result.witnesses)
-        self.assertEqual(result.diagnostics, ("evidence_extraction_unavailable:validation",))
+        self.assertEqual(result.diagnostics, ("evidence_extraction_unavailable:validation",
+                                              "evidence_validation_detail:invalid_json"))
 
     def test_valid_nonformal_extraction_is_partial_and_budget_errors_propagate(self):
         current_task, bundle = self._bundle()

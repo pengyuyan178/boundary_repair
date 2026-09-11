@@ -50,8 +50,10 @@ class SpecificationRecovery:
         context.budget.check_deadline()
         try:
             evidence = self.extract_evidence(task, snapshot, context)
-        except _EvidenceResponseValidationError:
-            return self._unavailable("evidence_extraction_unavailable:validation")
+        except _EvidenceResponseValidationError as error:
+            unavailable = self._unavailable("evidence_extraction_unavailable:validation")
+            return replace(unavailable, diagnostics=unavailable.diagnostics +
+                           ('evidence_validation_detail:' + str(error.__cause__),))
         if not any(claim.kind != ClaimKind.OBSERVATION for claim in evidence.claims):
             return self._unavailable("evidence_extraction_unavailable:no_normative_claims")
         try:
@@ -232,6 +234,7 @@ class SpecificationRecovery:
                 claim.source_ids,
                 description=claim.description,
                 entry_cases=claim.entry_cases,
+                binding_status='program_bound' if claim.entry_cases else 'unbound',
             )
             certain = (
                 space.consistency == SolverStatus.SAT
@@ -252,6 +255,7 @@ class SpecificationRecovery:
                             SolverStatus.UNKNOWN,
                             claim.source_ids,
                             case.interface,
+                            (case.expected,),
                         )
                     )
             elif positive.status != SolverStatus.UNSAT:

@@ -8,6 +8,7 @@ from boundary_repair.domain.specification import (
     ObservationKey,
     Term,
     Witness,
+    Scalar,
 )
 from boundary_repair.domain.task import SourceRef, SourceSpan
 
@@ -60,6 +61,10 @@ class LocalRepairModel:
     assumptions: ProofAssumptions
     coverage: Coverage
     diagnostics: tuple[str, ...] = ()
+    allowed_outputs: tuple[tuple[Scalar, ...], ...] = ()
+    covered_obligations: tuple[str, ...] = ()
+    proof_scope: str = 'direct_boolean_entry'
+    grammar_literals: tuple[Scalar, ...] = ()
 
 
 class ExpressivityVerdict(StrEnum):
@@ -77,6 +82,9 @@ class BoundaryAssessment:
     required_features: tuple[Feature, ...]
     certificate: str | None
     unresolved: tuple[str, ...] = ()
+    covered_obligations: tuple[str, ...] = ()
+    construction: str | None = None
+    proof_scope: str = 'direct_boolean_entry'
 
 
 @dataclass(frozen=True, slots=True)

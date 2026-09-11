@@ -310,7 +310,7 @@ def prepare_task_assets(task: TaskInput, config: ExperimentConfig, context: RunC
 def response_format(request: ModelRequest, config: ExperimentConfig) -> dict:
     """Select an explicit output contract without silently falling back or retrying."""
     if request.output_schema is None:
-        if request.schema_name in {'evidence.v2', 'fillings.v2', 'evidence.v3', 'evidence.v4', 'edits.v3', 'edits.v4'}:
+        if request.schema_name in {'evidence.v2', 'fillings.v2', 'evidence.v3', 'evidence.v4', 'evidence.v5', 'edits.v3', 'edits.v4'}:
             raise ConfigurationError('output_schema_missing')
         return {'type': 'json_object'}
     if config.integration.response_format == 'json_object':

@@ -344,7 +344,8 @@ class EvidenceAlignmentTests(unittest.TestCase):
         (self.snap.root / 'typed.ts').write_text(source, encoding='utf-8')
         self.snap = replace(self.snap, tree_sha256=tree_digest(self.snap.root))
         directory = self.program.observation_interfaces(self.snap, self.ctx)
-        self.assertEqual([item.site.symbol for item in directory], ['booleanInput'])
+        self.assertEqual([item.site.symbol for item in directory if item.kind == 'boolean_entry'], ['booleanInput'])
+        self.assertEqual([item.site.symbol for item in directory if item.kind == 'local_projection'], ['stringInput'])
 
     def test_unsupported_program_and_text_parser_have_no_observation_interfaces(self):
         unsupported = 'async function render(x) { return x; }\nfunction read(x) { return window.hidden || x; }\nfunction numeric(x) { return x + 1; }\n'
@@ -355,6 +356,78 @@ class EvidenceAlignmentTests(unittest.TestCase):
         self.assertEqual(text_program.observation_interfaces(self.snap, self.ctx), ())
         request = evidence_request_v4(task(), (), 8000, ())
         self.assertEqual(request.output_schema['properties']['frames']['items']['properties']['entry_cases']['maxItems'], 0)
+
+
+@unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+class LocalProjectionBindingTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.snap = snapshot(self.root)
+        self.source = ('function card(active, hidden) {\n'
+            '  const enabled = active || hidden;\n'
+            '  return <div title={enabled ? "shown" : "hidden"}>\n'
+            '    {enabled ? <strong /> : null}\n'
+            '  </div>;\n}\n')
+        (self.snap.root / 'ui.js').write_text(self.source, encoding='utf-8')
+        self.snap = replace(self.snap, tree_sha256=tree_digest(self.snap.root))
+        self.program = ProgramAdapter(config(self.root))
+        self.ctx = context()
+        self.task = replace(task(), problem_statement='card: when active=true and hidden=false, title should be shown.')
+        self.scope = self.program.source_scope(self.snap, self.ctx, self.task.problem_statement)
+
+    def test_program_owned_jsx_projections_and_local_contexts(self):
+        interfaces = self.program.observation_interfaces(self.snap, self.ctx)
+        self.assertEqual({i.property_name for i in interfaces}, {'jsx.attribute:title', 'jsx.children.contains:strong'})
+        self.assertTrue(all(i.kind == 'local_projection' and i.owner.path == 'ui.js' for i in interfaces))
+        self.assertTrue(all(i.input_sorts == (('active', 'boolean'), ('hidden', 'boolean')) for i in interfaces))
+        self.assertTrue(self.program.index(self.snap, self.ctx).local_interfaces)
+
+    def test_scalar_entry_binding_preserves_property_and_provenance(self):
+        from boundary_repair.kernel.evidence import evidence_request_v4, parse_evidence_v4
+        from boundary_repair.kernel.retrieval import scope_snippets
+        interfaces = self.program.observation_interfaces(self.snap, self.ctx)
+        code = scope_snippets(self.scope)
+        request = evidence_request_v4(self.task, code, 8000, interfaces)
+        self.assertEqual(request.schema_name, 'evidence.v5')
+        payload = json.loads(request.prompt)
+        directory = payload['evidence_catalog']['spans']
+        title = next(i for i in interfaces if i.property_name == 'jsx.attribute:title')
+        claim = {'statement': self.task.problem_statement, 'formalization': None, 'targets': [],
+            'evidence_refs': [{'span_id': next(r['span_id'] for r in directory if r['kind'] == kind)}
+                              for kind in ('issue_text', 'base_code')],
+            'entry_cases': [{'interface_id': title.interface_id, 'inputs': [
+                {'parameter': 'active', 'value': True}, {'parameter': 'hidden', 'value': False}], 'expected': 'shown'}]}
+        raw = {'observations': [], 'frames': [], 'requirement_groups': [{'alternatives': [{'all_of': [claim]}]}]}
+        bundle = parse_evidence_v4(json.dumps(raw), self.task, code, interfaces)
+        case = bundle.claims[0].entry_cases[0]
+        self.assertEqual(case.target.property_name, 'jsx.attribute:title')
+        self.assertEqual(case.expected, 'shown')
+        self.assertEqual(len(bundle.claims[0].source_ids), 2)
+        claim['entry_cases'][0]['expected'] = True
+        with self.assertRaises(ValidationError):
+            parse_evidence_v4(json.dumps(raw), self.task, code, interfaces)
+
+    def test_effectful_components_have_no_pure_projection_certificate_input(self):
+        (self.snap.root / 'ui.js').write_text(self.source.replace('const enabled', 'mutateState(); const enabled'), encoding='utf-8')
+        snap = replace(self.snap, tree_sha256=tree_digest(self.snap.root))
+        self.program.source_scope(snap, context(), self.task.problem_statement)
+        self.assertEqual(self.program.observation_interfaces(snap, context()), ())
+
+    def test_reference_schema_rejects_image_ids_in_text_fields(self):
+        from jsonschema import Draft202012Validator
+        from boundary_repair.domain.task import IssueAsset
+        image_task = replace(self.task, assets=(IssueAsset('https://example.invalid/view.png', 'image-0'),))
+        request = evidence_request_v4(image_task, scope_snippets(self.scope), 8000,
+                                     self.program.observation_interfaces(self.snap, self.ctx))
+        claim = {'statement': 'The original image shows the component.', 'targets': [], 'formalization': None,
+                 'entry_cases': [], 'evidence_refs': [{'span_id': 'image-0'}]}
+        raw = {'observations': [claim], 'frames': [], 'requirement_groups': []}
+        validator = Draft202012Validator(request.output_schema)
+        self.assertFalse(validator.is_valid(raw))
+        claim['evidence_refs'] = [{'image_id': 'image-0', 'bbox': [0, 0, 1, 1]}]
+        self.assertTrue(validator.is_valid(raw))
 
 
 if __name__ == '__main__':

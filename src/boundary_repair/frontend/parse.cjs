@@ -128,7 +128,7 @@ function parseFile(file) {
     return result;
   }
 
-  const locations = [], functions = [], consumerGuards = [], editBlocks = [], identifiers = new Set();
+  const locations = [], functions = [], consumerGuards = [], editBlocks = [], localModels = [], identifiers = new Set();
   const blockKeys = new Set();
   const unsupported = new Set();
   const locationsByKey = new Map();
@@ -208,6 +208,254 @@ function parseFile(file) {
     consumerGuards.push({start_byte: site.start_byte, end_byte: site.end_byte, fallback});
   }
 
+  /** Extract finite scalar and JSX-construction projections from pure local control flow. */
+  function addLocalModel(fn, ownerSite, name) {
+    if (!ownerSite || !fn.body || fn.asteriskToken || fn.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)) return;
+    if (countNodes(fn.body) > 1024 || localModels.length >= 128) return;
+    const roots = new Set(['this']), sorts = new Map(), definitions = new Map();
+    let valid = true;
+    for (const parameter of fn.parameters) {
+      if (parameter.dotDotDotToken) { valid = false; break; }
+      const names = ts.isIdentifier(parameter.name) ? [parameter.name] :
+        ts.isObjectBindingPattern(parameter.name) ? parameter.name.elements.map(e => e.dotDotDotToken ? null : e.name) : [];
+      if (!names.length || names.some(n => !n || !ts.isIdentifier(n))) { valid = false; break; }
+      for (const identifier of names) {
+        roots.add(identifier.text);
+        const type = parameter.type?.kind;
+        const sort = type === ts.SyntaxKind.BooleanKeyword ? 'boolean' : type === ts.SyntaxKind.StringKeyword ? 'string' :
+          type === ts.SyntaxKind.NumberKeyword ? 'number' : null;
+        if (sort && ts.isIdentifier(parameter.name)) sorts.set(identifier.text, sort);
+      }
+    }
+    if (!valid) return;
+    const purity = [fn.body];
+    while (purity.length) {
+      const node = purity.pop();
+      if (ts.isFunctionLike(node)) continue;
+      const regexCall = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+        && node.expression.name.text === 'test' && ts.isRegularExpressionLiteral(node.expression.expression);
+      if ((ts.isCallExpression(node) && !regexCall) || ts.isNewExpression(node) || ts.isAwaitExpression(node)
+          || ts.isYieldExpression(node) || ts.isPostfixUnaryExpression(node) || ts.isJsxSpreadAttribute(node)
+          || ts.isSpreadAssignment(node) || ts.isDeleteExpression(node)
+          || (ts.isPrefixUnaryExpression(node) && [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator))
+          || (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
+              && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment)) return;
+      ts.forEachChild(node, child => { purity.push(child); });
+    }
+    const candidates = new Map(), observations = [];
+    const lit = value => ({op: 'literal', value});
+    const key = node => `${node.getStart(sf)}:${node.end}`;
+    function access(node) {
+      if (ts.isIdentifier(node)) return roots.has(node.text) ? node.text : null;
+      if (node.kind === ts.SyntaxKind.ThisKeyword) return 'this';
+      if (ts.isPropertyAccessExpression(node) && !node.questionDotToken) {
+        const parent = access(node.expression);
+        return parent ? parent + '.' + node.name.text : null;
+      }
+      return null;
+    }
+    function infer(node, env, depth = 0) {
+      if (!node || depth > 24) return null;
+      if (ts.isParenthesizedExpression(node)) return infer(node.expression, env, depth + 1);
+      if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword) return 'boolean';
+      if (ts.isStringLiteralLike(node)) return 'string';
+      if (ts.isNumericLiteral(node)) return 'number';
+      if (node.kind === ts.SyntaxKind.NullKeyword) return 'null';
+      if (ts.isIdentifier(node) && env.has(node.text)) {
+        const value = env.get(node.text);
+        return infer(value.node, value.env, depth + 1);
+      }
+      const path = access(node);
+      if (path) return sorts.get(path) || null;
+      if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) return 'boolean';
+      if (ts.isBinaryExpression(node)) {
+        if ([ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+          ts.SyntaxKind.LessThanToken, ts.SyntaxKind.LessThanEqualsToken, ts.SyntaxKind.GreaterThanToken,
+          ts.SyntaxKind.GreaterThanEqualsToken].includes(node.operatorToken.kind)) return 'boolean';
+        if ([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken].includes(node.operatorToken.kind))
+          return infer(node.left, env, depth + 1) === 'boolean' && infer(node.right, env, depth + 1) === 'boolean' ? 'boolean' : null;
+      }
+      if (ts.isConditionalExpression(node)) return infer(node.whenTrue, env, depth + 1) || infer(node.whenFalse, env, depth + 1);
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+          && node.expression.name.text === 'test' && ts.isRegularExpressionLiteral(node.expression.expression)) return 'boolean';
+      return null;
+    }
+    function remember(node, env, sort, guard = false) {
+      if (!sort || !atomic(node) || candidates.size >= 48) return;
+      candidates.set(key(node), {node, env, sort, guard});
+    }
+    function value(node, env, expected = null, replacement = null, depth = 0) {
+      if (!node || depth > 24) return null;
+      if (replacement && key(node) === replacement) return {op: 'symbol', value: '$edit'};
+      if (ts.isParenthesizedExpression(node)) return value(node.expression, env, expected, replacement, depth + 1);
+      if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword) return lit(node.kind === ts.SyntaxKind.TrueKeyword);
+      if (ts.isStringLiteralLike(node)) return lit(node.text);
+      if (ts.isNumericLiteral(node)) return lit(Number(node.text));
+      if (node.kind === ts.SyntaxKind.NullKeyword) return lit(null);
+      if (ts.isIdentifier(node) && env.has(node.text)) {
+        const definition = env.get(node.text);
+        const sort = infer(definition.node, definition.env) || expected;
+        if (!replacement) remember(definition.node, definition.env, sort);
+        return value(definition.node, definition.env, sort, replacement, depth + 1);
+      }
+      const path = access(node);
+      if (path) {
+        const sort = sorts.get(path) || expected;
+        if (!sort || path === 'this' || (sorts.has(path) && expected && sorts.get(path) !== expected)) return null;
+        if (!replacement) sorts.set(path, sort);
+        return {op: 'symbol', value: path};
+      }
+      if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+        const child = value(node.operand, env, 'boolean', replacement, depth + 1);
+        return child ? {op: 'not', args: [child]} : null;
+      }
+      if (ts.isBinaryExpression(node)) {
+        const ops = new Map([[ts.SyntaxKind.EqualsEqualsEqualsToken, 'eq'], [ts.SyntaxKind.ExclamationEqualsEqualsToken, 'ne'],
+          [ts.SyntaxKind.AmpersandAmpersandToken, 'and'], [ts.SyntaxKind.BarBarToken, 'or'],
+          [ts.SyntaxKind.LessThanToken, 'lt'], [ts.SyntaxKind.LessThanEqualsToken, 'le'],
+          [ts.SyntaxKind.GreaterThanToken, 'lt'], [ts.SyntaxKind.GreaterThanEqualsToken, 'le']]);
+        const op = ops.get(node.operatorToken.kind);
+        if (!op) return null;
+        const sort = ['and', 'or'].includes(op) ? 'boolean' : ['lt', 'le'].includes(op) ? 'number' :
+          infer(node.left, env) || infer(node.right, env);
+        if (!sort) return null;
+        let args = [value(node.left, env, sort, replacement, depth + 1), value(node.right, env, sort, replacement, depth + 1)];
+        if ([ts.SyntaxKind.GreaterThanToken, ts.SyntaxKind.GreaterThanEqualsToken].includes(node.operatorToken.kind)) args.reverse();
+        return args.every(Boolean) ? {op, args} : null;
+      }
+      if (ts.isConditionalExpression(node)) {
+        if (!replacement) remember(node.condition, env, 'boolean', true);
+        const sort = infer(node.whenTrue, env) || infer(node.whenFalse, env) || expected;
+        const args = [value(node.condition, env, 'boolean', replacement, depth + 1),
+          value(node.whenTrue, env, sort, replacement, depth + 1), value(node.whenFalse, env, sort, replacement, depth + 1)];
+        return args.every(Boolean) ? {op: 'ite', args} : null;
+      }
+      if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isPropertyAccessExpression(node.expression)
+          && node.expression.name.text === 'test' && ts.isRegularExpressionLiteral(node.expression.expression)) {
+        const raw = node.expression.expression.getText(sf), end = raw.lastIndexOf('/');
+        const pattern = raw.slice(1, end), flags = raw.slice(end + 1);
+        const argument = value(node.arguments[0], env, 'string', replacement, depth + 1);
+        return argument && ['', 'i'].includes(flags) ? {op: 'regex_test', args: [lit(pattern), lit(flags), argument]} : null;
+      }
+      return null;
+    }
+    function presence(node, env, tag, replacement = null) {
+      if (ts.isParenthesizedExpression(node)) return presence(node.expression, env, tag, replacement);
+      if (ts.isConditionalExpression(node)) {
+        if (!replacement) remember(node.condition, env, 'boolean', true);
+        const args = [value(node.condition, env, 'boolean', replacement), presence(node.whenTrue, env, tag, replacement),
+          presence(node.whenFalse, env, tag, replacement)];
+        return args.every(Boolean) ? {op: 'ite', args} : null;
+      }
+      if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const opening = ts.isJsxElement(node) ? node.openingElement : node;
+        if (opening.tagName.getText(sf) === tag) return lit(true);
+        if (!ts.isJsxElement(node)) return lit(false);
+        const children = node.children.filter(child => !ts.isJsxText(child)).map(child =>
+          ts.isJsxExpression(child) ? child.expression ? presence(child.expression, env, tag, replacement) : lit(false) :
+            presence(child, env, tag, replacement));
+        return children.every(Boolean) ? {op: 'or', args: children} : null;
+      }
+      if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node) ||
+          [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(node.kind)) return lit(false);
+      return null;
+    }
+    function observe(node, env, guards, property, projection, sort, tag = '') {
+      const expression = projection === 'presence' ? presence(node, env, tag) : value(node, env, sort);
+      const conditions = guards.map(g => {
+        const term = value(g.node, g.env, 'boolean');
+        return term && (g.positive ? term : {op: 'not', args: [term]});
+      });
+      if (!expression || !conditions.every(Boolean)) return;
+      if (projection === 'value') remember(node, env, sort);
+      const site = span(node, 'Observation', name);
+      if (site) observations.push({node, env, guards, property, projection, sort, tag, site,
+        expression, conditions});
+    }
+    function returned(node, env, guards) {
+      const stack = [node];
+      const scalar = infer(node, env);
+      const returnSort = fn.type?.kind === ts.SyntaxKind.BooleanKeyword ? 'boolean' :
+        fn.type?.kind === ts.SyntaxKind.StringKeyword ? 'string' : fn.type?.kind === ts.SyntaxKind.NumberKeyword ? 'number' : null;
+      if (scalar && returnSort && scalar !== returnSort) { valid = false; return; }
+      if (scalar) observe(node, env, guards, 'return', 'value', scalar);
+      while (stack.length) {
+        const current = stack.pop();
+        if (ts.isFunctionLike(current)) continue;
+        if (ts.isJsxAttribute(current) && current.initializer) {
+          const expr = ts.isJsxExpression(current.initializer) ? current.initializer.expression : current.initializer;
+          const attribute = current.name.getText(sf);
+          const sort = expr && (infer(expr, env) || (['hidden', 'disabled', 'checked', 'selected'].includes(attribute) ? 'boolean' : 'string'));
+          if (expr) observe(expr, env, guards, 'jsx.attribute:' + attribute, 'value', sort);
+        }
+        if (ts.isJsxExpression(current) && current.expression && !ts.isJsxAttribute(current.parent)) {
+          const tags = new Set(), nodes = [current.expression];
+          while (nodes.length) {
+            const child = nodes.pop();
+            if (ts.isJsxElement(child)) tags.add(child.openingElement.tagName.getText(sf));
+            if (ts.isJsxSelfClosingElement(child)) tags.add(child.tagName.getText(sf));
+            if (!ts.isFunctionLike(child)) ts.forEachChild(child, nested => { nodes.push(nested); });
+          }
+          if (tags.size) for (const tag of [...tags].sort().slice(0, 8))
+            observe(current.expression, env, guards, 'jsx.children.contains:' + tag, 'presence', 'boolean', tag);
+          else observe(current.expression, env, guards, 'jsx.children.value', 'value', infer(current.expression, env) || 'string');
+        }
+        ts.forEachChild(current, child => { stack.push(child); });
+      }
+    }
+    function flow(statements, env, guards, depth = 0) {
+      if (depth > 12) { valid = false; return; }
+      for (let index = 0; index < statements.length; index++) {
+        const statement = statements[index];
+        if (ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.Const)) {
+          for (const declaration of statement.declarationList.declarations) {
+            if (!ts.isIdentifier(declaration.name) || !declaration.initializer || !atomic(declaration.initializer)) { valid = false; return; }
+            env.set(declaration.name.text, {node: declaration.initializer, env: new Map(env)});
+          }
+        } else if (ts.isReturnStatement(statement) && statement.expression) {
+          returned(statement.expression, env, guards);
+          return;
+        } else if (ts.isIfStatement(statement)) {
+          remember(statement.expression, env, 'boolean', true);
+          const rest = statements.slice(index + 1);
+          const branch = part => !part ? rest : [...(ts.isBlock(part) ? part.statements : [part]), ...rest];
+          flow(branch(statement.thenStatement), new Map(env), [...guards, {node: statement.expression, env: new Map(env), positive: true}], depth + 1);
+          flow(branch(statement.elseStatement), new Map(env), [...guards, {node: statement.expression, env: new Map(env), positive: false}], depth + 1);
+          return;
+        } else if (!ts.isEmptyStatement(statement)) { valid = false; return; }
+      }
+    }
+    if (ts.isBlock(fn.body)) flow([...fn.body.statements], definitions, []);
+    else returned(fn.body, definitions, []);
+    if (!valid || !observations.length || sorts.size > 8 || observations.length > 32) return;
+    if ([...sorts.keys()].some(path => [...sorts.keys()].some(other => other.startsWith(path + '.')))) return;
+    const edits = [];
+    for (const [replacement, candidate] of candidates) {
+      const continuations = [];
+      for (let index = 0; index < observations.length; index++) {
+        const observer = observations[index];
+        const expression = observer.projection === 'presence' ? presence(observer.node, observer.env, observer.tag, replacement) :
+          value(observer.node, observer.env, observer.sort, replacement);
+        const conditions = observer.guards.map(g => {
+          const term = value(g.node, g.env, 'boolean', replacement);
+          return term && (g.positive ? term : {op: 'not', args: [term]});
+        });
+        if (!expression || !conditions.every(Boolean)) continue;
+        continuations.push({observation: index, expression, conditions});
+      }
+      const expression = value(candidate.node, candidate.env, candidate.sort);
+      const site = expression ? span(candidate.node, candidate.guard ? 'LocalGuard' : 'LocalValue', name) : null;
+      if (site && continuations.length === observations.length) edits.push({site, output_sort: candidate.sort, expression, continuations});
+    }
+    if (!edits.length || sorts.size > 8) return;
+    const model = {owner: ownerSite, name, inputs: [...sorts].sort().map(([name, sort]) => ({name, sort})), edits,
+      observations: observations.map(o => ({site: o.site, property_name: o.property, output_sort: o.sort,
+        projection: o.projection, expression: o.expression, conditions: o.conditions})),
+      premises: ['pure_declared_entry_model', 'plain_data_without_getters_or_proxies',
+        'JSX_construction_projection_not_browser_visibility', 'declared_scalar_sorts_not_all_JavaScript_inputs']};
+    if (reserveMetadata(Buffer.byteLength(JSON.stringify(model), 'utf8'))) localModels.push(model);
+  }
+
   /** Retain complete declarations and statements independently of semantic proof support. */
   function addEditBlock(node, owner) {
     const declaration = ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node)
@@ -245,7 +493,7 @@ function parseFile(file) {
     let owner = inheritedOwner;
     addEditBlock(node, owner);
     if (ts.isIdentifier(node)) addIdentifier(node.text);
-    if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
+    if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node)) {
       const name = node.name?.text || (ts.isVariableDeclaration(node.parent) ? node.parent.name.getText(sf) : '');
       const functionSite = name ? span(node, 'Function', name) : null;
       if (name) owner = name;
@@ -266,6 +514,8 @@ function parseFile(file) {
             premise: 'direct_function_entry_boolean_arguments_identity_continuation'});
         }
       }
+      const legacy = expression && params.every(Boolean) && booleanTypes && booleanTerm(expression, params);
+      if (!legacy) addLocalModel(node, functionSite, name);
     }
     if (ts.isIfStatement(node) && atomic(node.expression)) span(node.expression, 'Condition', owner);
     if (ts.isConditionalExpression(node) && atomic(node.condition)) span(node.condition, 'Condition', owner);
@@ -299,7 +549,7 @@ function parseFile(file) {
     for (let index = children.length - 1; index >= 0; index -= 1) work.push([children[index], owner]);
   }
   return {path: file.path, locations, functions, identifiers: [...identifiers].sort(),
-    semantic_hash: semanticFingerprint, consumer_guards: consumerGuards, edit_blocks: editBlocks,
+    semantic_hash: semanticFingerprint, consumer_guards: consumerGuards, edit_blocks: editBlocks, local_models: localModels,
     syntax_status: 'passed', unsupported: [...unsupported].sort()};
 }
 

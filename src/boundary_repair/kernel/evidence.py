@@ -11,6 +11,7 @@ from boundary_repair.domain.specification import (
     EntryCase,
     ObservationInterface,
     ObservationKey,
+    Scalar,
     Term,
 )
 from boundary_repair.domain.task import SourceKind, SourceRef, SourceSpan, TaskInput
@@ -597,19 +598,29 @@ def _entry_cases(raw: object, interfaces: tuple[ObservationInterface, ...],
         interface = directory.get(text_field(item['interface_id'], 128))
         if interface is None:
             raise ValidationError('unknown_observation_interface')
-        if not isinstance(item['inputs'], list) or len(item['inputs']) > 8 or type(item['expected']) is not bool:
+        if not isinstance(item['inputs'], list) or len(item['inputs']) > 8:
             raise ValidationError('invalid_boolean_entry_case')
+        def scalar(value: object, sort: str) -> Scalar:
+            """Validate an entry scalar against its program-declared JavaScript sort."""
+            if sort == 'number' and type(value) in {int, float} and math.isfinite(value) and abs(value) <= 2 ** 53 - 1:
+                return float(value)
+            types = {'boolean': bool, 'string': str, 'null': type(None)}
+            if sort not in types or type(value) is not types[sort] or (sort == 'string' and len(value) > 256):
+                raise ValidationError('entry_value_sort_mismatch')
+            return value
+        expected = scalar(item['expected'], interface.output_sort)
+        sorts = dict(interface.input_sorts) or {name: 'boolean' for name in interface.parameters}
         inputs = {}
         for raw_input in item['inputs']:
             argument = require_keys(raw_input, {'parameter', 'value'})
             name = text_field(argument['parameter'], 256)
-            if name in inputs or type(argument['value']) is not bool:
+            if name in inputs or name not in sorts:
                 raise ValidationError('invalid_boolean_entry_inputs')
-            inputs[name] = argument['value']
+            inputs[name] = scalar(argument['value'], sorts[name])
         if set(inputs) != set(interface.parameters):
             raise ValidationError('entry_inputs_must_match_parameters')
         cases.append(EntryCase(interface, tuple((name, inputs[name]) for name in interface.parameters),
-                               item['expected']))
+                               expected))
     return tuple(cases)
 
 
@@ -656,13 +667,57 @@ EVIDENCE_V4_SYSTEM = EVIDENCE_V3_SYSTEM.replace('evidence.v3', 'evidence.v4') + 
 def evidence_request_v4(task: TaskInput, code: tuple[dict[str, object], ...], tokens: int,
                         interfaces: tuple[ObservationInterface, ...]) -> ModelRequest:
     """Request evidence and supported entry constraints together, without another model call."""
+    extended = any(item.kind != 'boolean_entry' for item in interfaces)
     schema = evidence_output_schema_v4(interfaces)
-    catalog = [dict(asdict(item), property_name='return', input_sort='boolean', output_sort='boolean',
-                    proof_scope='direct_function_entry_identity_continuation_not_UI_reachability')
-               for item in interfaces]
-    prompt = json.dumps({'evidence_catalog': evidence_catalog_v3(task, code),
-                         'observation_interfaces': catalog, 'output_schema': schema}, ensure_ascii=False)
-    return ModelRequest(EVIDENCE_V4_SYSTEM, prompt, task.assets, 'evidence.v4', tokens, schema)
+    if extended:
+        entry = schema['properties']['frames']['items']['properties']['entry_cases']['items']
+        entry['properties']['expected'] = {'type': ['boolean', 'string', 'number', 'null']}
+        entry['properties']['inputs']['items']['properties']['value'] = {'type': ['boolean', 'string', 'number', 'null']}
+    sources = evidence_catalog_v3(task, code)
+    bind_reference_schema(schema, sources)
+    catalog = [dict(asdict(item), input_sort='declared_scalar' if extended else 'boolean',
+                    proof_scope='declared_entry_and_source_projection_not_UI_reachability')
+                for item in interfaces]
+    prompt = json.dumps({'evidence_catalog': sources,
+                          'observation_interfaces': catalog, 'output_schema': schema}, ensure_ascii=False)
+    system = EVIDENCE_V5_SYSTEM if extended else EVIDENCE_V4_SYSTEM
+    return ModelRequest(system, prompt, task.assets, 'evidence.v5' if extended else 'evidence.v4', tokens, schema)
+
+
+def bind_reference_schema(schema: dict, catalog: dict) -> None:
+    """Constrain text and image references to separate, program-owned identifier directories."""
+    variants = [object_schema({'span_id': {'type': 'string', 'enum': [row['span_id'] for row in catalog['spans']]}})]
+    if catalog['images']:
+        variants.append(object_schema({'image_id': {'type': 'string', 'enum': [row['image_id'] for row in catalog['images']]},
+            'bbox': {'type': 'array', 'items': {'type': 'number'}, 'minItems': 4, 'maxItems': 4}}))
+    schema.setdefault('$defs', {})['evidence_ref'] = {'anyOf': variants}
+    def visit(value: object) -> None:
+        """Attach the shared typed reference definition to every claim schema."""
+        if isinstance(value, dict):
+            if 'evidence_refs' in value:
+                value['evidence_refs']['items'] = {'$ref': '#/$defs/evidence_ref'}
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+    visit(schema)
+
+
+EVIDENCE_V5_SYSTEM = EVIDENCE_V3_SYSTEM.replace('evidence.v3', 'evidence.v5') + (
+    ' Every claim requires entry_cases. The program-owned observation_interfaces describe exact '
+    'source projections with input_sorts, output_sort and premises. A case contains interface_id, '
+    'inputs:[{parameter,value}] for every declared input, and expected of the declared output sort. '
+    'Use a case only when original evidence supports both the entry context and desired property. '
+    'Cite the issue or image and a supplied source span overlapping that observation site. '
+    'JSX properties describe values delivered at a source consumer; children.contains describes '
+    'construction of that element, not browser visibility or layout. Do not equate these without '
+    'evidence. Retain alternative source bindings in separate interpretation alternatives. '
+    'Observations must have empty entry_cases. Unsupported, ambiguous or insufficiently grounded '
+    'claims retain their full statement with entry_cases:[]. Never invent inputs from the desired '
+    'answer, treat baseline outputs as expected outputs, or assert proof or reachability flags. '
+    'Frame outputs require positive evidence that the behavior must be preserved.'
+)
 
 
 def parse_evidence_v4(text: str, task: TaskInput, code: tuple[dict[str, object], ...],

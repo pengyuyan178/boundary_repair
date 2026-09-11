@@ -88,26 +88,33 @@ class ObservationKey:
 
 @dataclass(frozen=True, slots=True)
 class ObservationInterface:
-    """Program-owned, snapshot-bound direct Boolean entry observation."""
+    """Program-owned observation with an explicit projection and declared entry domain."""
     interface_id: str
     site: SourceSpan
     parameters: tuple[str, ...]
     snapshot_sha256: str
+    kind: str = 'boolean_entry'
+    property_name: str = 'return'
+    input_sorts: tuple[tuple[str, str], ...] = ()
+    output_sort: str = 'boolean'
+    owner: SourceSpan | None = None
+    summary_key: str = ''
+    premises: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class EntryCase:
     """An evidence-proposed entry case, separate from the original behavioral target."""
     interface: ObservationInterface
-    inputs: tuple[tuple[str, bool], ...]
-    expected: bool
+    inputs: tuple[tuple[str, Scalar], ...]
+    expected: Scalar
 
     @property
     def target(self) -> ObservationKey:
         """Compile the identity return projection in declared parameter order."""
         context = Term('and', tuple(Term('eq', (Term('symbol', value=name), Term('literal', value=value)))
                                     for name, value in self.inputs))
-        return ObservationKey(self.interface.site.symbol, 'return', context)
+        return ObservationKey(self.interface.site.symbol, self.interface.property_name, context)
 
     @property
     def relation(self) -> Term:
@@ -124,6 +131,7 @@ class Witness:
     reachability: SolverStatus
     source_ids: tuple[str, ...]
     interface: ObservationInterface | None = None
+    expected_values: tuple[Scalar, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +144,7 @@ class BehaviorConstraint:
     source_ids: tuple[str, ...]
     description: str = ''
     entry_cases: tuple[EntryCase, ...] = ()
+    binding_status: str = 'unbound'
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,8 +3,11 @@ import argparse
 from dataclasses import fields, is_dataclass
 from enum import Enum
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tarfile
 from types import UnionType
 from typing import get_args, get_origin, get_type_hints
 
@@ -81,13 +84,54 @@ def audit_context(batch: Path) -> dict:
 def main():
     """Save an auditable context comparison in a new output file."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--batch', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--batch', type=Path)
+    parser.add_argument('--output', type=Path)
+    parser.add_argument('--checkpoint', type=Path)
+    parser.add_argument('--message', default='Record verified layer implementation')
     args = parser.parse_args()
+    if args.checkpoint is not None:
+        print(json.dumps(checkpoint(args.checkpoint, args.message)))
+        return
+    if args.batch is None or args.output is None:
+        parser.error('--batch and --output are required for context audits')
     result = audit_context(args.batch)
     with args.output.open('x', encoding='utf-8') as stream:
         json.dump(result, stream, ensure_ascii=False, indent=2)
     print(json.dumps(result, ensure_ascii=True))
+
+
+def checkpoint(snapshot: Path, message: str) -> dict:
+    """Record a frozen snapshot on a separate Git branch without changing HEAD or the user's index."""
+    root = Path(__file__).resolve().parents[1]
+    reference = 'refs/heads/codex/layer-repair-20260912'
+    state = json.loads((snapshot / 'source_state.json').read_text(encoding='utf-8'))
+    previous = subprocess.run(['git', '-C', str(root), 'rev-parse', '--verify', '--quiet', reference],
+                              capture_output=True, text=True)
+    parent = previous.stdout.strip() if previous.returncode == 0 else state['git_head']
+    index = (snapshot / 'checkpoint.index').resolve()
+    if index.exists() or (snapshot / 'git_checkpoint.json').exists():
+        raise ValueError('checkpoint_already_exists')
+    env = {**os.environ, 'GIT_INDEX_FILE': str(index), 'GIT_AUTHOR_NAME': 'Codex',
+           'GIT_AUTHOR_EMAIL': 'codex@local', 'GIT_COMMITTER_NAME': 'Codex', 'GIT_COMMITTER_EMAIL': 'codex@local'}
+    def git(*args, data=None):
+        return subprocess.check_output(['git', '-C', str(root), *args], input=data, env=env).decode().strip()
+    git('read-tree', parent)
+    entries = []
+    with tarfile.open(snapshot / 'source.tar.gz') as archive:
+        for member in archive.getmembers():
+            if not member.isfile() or member.name.startswith('node_modules/'):
+                continue
+            blob = git('hash-object', '-w', '--stdin', data=archive.extractfile(member).read())
+            mode = '100755' if member.mode & 0o111 else '100644'
+            entries.append(f'{mode} {blob}\t{member.name}\n')
+    git('update-index', '--index-info', data=''.join(entries).encode())
+    tree = git('write-tree')
+    commit = git('commit-tree', tree, '-p', parent, data=(message + '\n').encode())
+    git('update-ref', reference, commit, parent if previous.returncode == 0 else '0' * 40)
+    result = {'branch': reference, 'commit': commit, 'parent': parent,
+              'source_archive_sha256': state['archive_sha256'], 'worktree_and_main_index_unchanged': True}
+    (snapshot / 'git_checkpoint.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+    return result
 
 
 if __name__ == '__main__':

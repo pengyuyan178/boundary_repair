@@ -74,7 +74,7 @@ class ProgramAdapter:
                 locations.append(SourceSpan(file.path, 1, max(1, len(raw.splitlines())),
                                             file.sha256, 0, len(raw), 'File'))
         parsed = self._data
-        names, interfaces = set(), []
+        names, interfaces, local_interfaces = set(), [], []
         for row in parsed['files']:
             if row['path'] not in supported_paths:
                 continue
@@ -82,8 +82,17 @@ class ProgramAdapter:
             diagnostics.extend(f"{row['path']}:{d}" for d in row.get('unsupported', []))
             locations.extend(SourceSpan(**item) for item in row.get('locations', []))
             interfaces.extend((SourceSpan(**item['site']), tuple(item['params'])) for item in row.get('functions', []))
+            for model in row.get('local_models', []):
+                owner = SourceSpan(**model['owner'])
+                if any(r.path == owner.path and r.start_byte <= owner.start_byte
+                       and owner.end_byte <= r.end_byte for r in scope.regions):
+                    local_interfaces.extend((SourceSpan(**item['site']), tuple(x['name'] for x in model['inputs']),
+                                             'consumer' if any(o['property_name'].startswith('jsx.')
+                                                               for o in model['observations']) else 'condition')
+                                            for item in model['edits'])
         self._data = parsed
-        self._index = ProgramIndex(tuple(sorted(names)), tuple(locations), tuple(diagnostics), tuple(interfaces))
+        self._index = ProgramIndex(tuple(sorted(names)), tuple(locations), tuple(diagnostics), tuple(interfaces),
+                                   tuple(local_interfaces))
         return self._index
 
     def observation_interfaces(self, snapshot: RepositorySnapshot,
@@ -92,6 +101,20 @@ class ProgramAdapter:
         index = self.index(snapshot, context)
         result = tuple(item for site, parameters in index.read_interfaces
                        if (item := self._observation_interface(site, parameters, snapshot, context)) is not None)
+        scope = self.source_scope(snapshot, context)
+        for row in self._data['files']:
+            for model in row.get('local_models', []):
+                owner = SourceSpan(**model['owner'])
+                if not any(r.path == owner.path and r.start_byte <= owner.start_byte
+                           and owner.end_byte <= r.end_byte for r in scope.regions):
+                    continue
+                key = hashlib.sha256(json.dumps(model, sort_keys=True).encode()).hexdigest()
+                for number, observation in enumerate(model['observations']):
+                    identity = hashlib.sha256(f'{snapshot.tree_sha256}:{key}:{number}'.encode()).hexdigest()[:24]
+                    result += (ObservationInterface('projection:' + identity, SourceSpan(**observation['site']),
+                        tuple(item['name'] for item in model['inputs']), snapshot.tree_sha256, 'local_projection',
+                        observation['property_name'], tuple((item['name'], item['sort']) for item in model['inputs']),
+                        observation['output_sort'], owner, f'{key}:{number}', tuple(model['premises'])),)
         return tuple(sorted(result, key=lambda item: (item.site.path, item.site.start_byte)))
 
     def _observation_interface(self, site: SourceSpan, parameters: tuple[str, ...],
