@@ -2,12 +2,14 @@
 from dataclasses import dataclass, replace
 from itertools import combinations
 
-from boundary_repair.domain.repair import BoundaryAssessment, Feature, ExpressivityVerdict, LocalRepairModel, LocalizationResult, RepairBoundary
+from boundary_repair.domain.repair import BoundaryAssessment, Feature, ExpressivityVerdict, InterfaceCertificate, LocalRepairModel, LocalizationResult, RepairBoundary
 from boundary_repair.domain.runtime import RunContext
 from boundary_repair.domain.specification import ContractSet, Coverage, SolverStatus, Term
 from boundary_repair.domain.task import RepositorySnapshot, TaskInput
 from boundary_repair.kernel.retrieval import candidate_boundaries
 from boundary_repair.kernel.terms import literal_assignments, substitute
+from boundary_repair.kernel.terms import symbols, typed_key
+from boundary_repair.kernel.boolean import synthesize_finite
 from boundary_repair.ports import LogicPort, ProgramPort
 
 
@@ -42,6 +44,28 @@ class ExpressivityLocalization:
         exclusion. Missing witnesses, projections or mappings downgrade the model to PARTIAL.
         """
         model = self.program.summarize(boundary, contracts.witnesses, snapshot, context)
+        if model.proof_scope == 'finite_source_projection':
+            cases = {f'{claim.constraint_id}:{number}': (claim, case)
+                     for claim in contracts.must + contracts.frames for number, case in enumerate(claim.entry_cases)}
+            valid = True
+            for witness in model.witnesses:
+                obligation = cases.get(witness.witness_id)
+                if obligation is None:
+                    valid = False
+                    continue
+                claim, case = obligation
+                if (witness.interface != case.interface or witness.observations != (case.target,)
+                        or witness.source_ids != claim.source_ids or len(witness.expected_values) != 1
+                        or typed_key(witness.expected_values[0]) != typed_key(case.expected)):
+                    valid = False
+            remaining = tuple('uncovered_entry_case:' + f'{claim.constraint_id}:{number}'
+                              for claim in contracts.must + contracts.frames
+                              for number, case in enumerate(claim.entry_cases)
+                              if f'{claim.constraint_id}:{number}' not in model.covered_obligations)
+            remaining += tuple('unbound_hard_constraint:' + claim.constraint_id
+                               for claim in contracts.must + contracts.frames if not claim.entry_cases)
+            return replace(model, diagnostics=model.diagnostics + remaining + (() if valid else ('projection_witness_obligation_mismatch',)),
+                           coverage=model.coverage if valid else Coverage.PARTIAL)
         constraints = list(model.constraints)
         covered = set()
         reliable = model.coverage == Coverage.COMPLETE
@@ -88,6 +112,28 @@ class ExpressivityLocalization:
         source_version = '|'.join(span.content_sha256 for span in model.boundary.sites)
         certificate = f'entry-boolean:{model.boundary.boundary_id}:{source_version}:{answer.certificate}'
         required = model.boundary.readable_features
+        if model.proof_scope == 'finite_source_projection':
+            construction = None
+            if verdict == ExpressivityVerdict.FEASIBLE:
+                cases = tuple((literal_assignments(term), allowed) for term, allowed in zip(model.input_terms, model.allowed_outputs))
+                expression = synthesize_finite(tuple(f.feature_id for f in required), cases, model.grammar_atoms,
+                                              model.grammar_literals, model.output_sort, context)
+                if expression is None:
+                    return BoundaryAssessment(model.boundary, ExpressivityVerdict.UNKNOWN, required, None,
+                        model.diagnostics + ('finite_grammar_realization_not_found',), model.covered_obligations,
+                        proof_scope=model.proof_scope)
+                construction = expression.source
+                required = tuple(f for f in required if f.feature_id in symbols(expression.term))
+            proof = InterfaceCertificate(model.covered_obligations, model.input_terms, model.allowed_outputs,
+                model.output_domain, model.assumptions,
+                tuple(dict.fromkeys(w.interface.snapshot_sha256 for w in model.witnesses)),
+                tuple(dict.fromkeys(w.interface.summary_key for w in model.witnesses)))
+            certificate = f'projection-v1:{model.boundary.boundary_id}:{source_version}:{answer.certificate}'
+            return BoundaryAssessment(model.boundary, verdict, required, certificate,
+                model.diagnostics + ('proof_scope:declared_entry_and_source_projection',
+                                     'entry_case_evidence_interpretation_not_verified',
+                                     'whole_UI_reachability_and_unobserved_effects_unproved'),
+                model.covered_obligations, construction, model.proof_scope, proof)
         if verdict == ExpressivityVerdict.FEASIBLE and len(required) <= 8:
             required = self.minimum_features(model, context)
         return BoundaryAssessment(model.boundary, verdict, required, certificate,

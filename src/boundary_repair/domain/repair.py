@@ -65,6 +65,22 @@ class LocalRepairModel:
     covered_obligations: tuple[str, ...] = ()
     proof_scope: str = 'direct_boolean_entry'
     grammar_literals: tuple[Scalar, ...] = ()
+    grammar_atoms: tuple[Term, ...] = ()
+    output_sort: str = 'boolean'
+    output_domain: tuple[Scalar, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class InterfaceCertificate:
+    """Replayable finite witness evidence and the precise source/grammar domain of an interface proof."""
+    witnesses: tuple[str, ...]
+    inputs: tuple[Term, ...]
+    allowed_outputs: tuple[tuple[Scalar, ...], ...]
+    output_domain: tuple[Scalar, ...]
+    assumptions: ProofAssumptions
+    snapshot_sha256: tuple[str, ...]
+    summary_keys: tuple[str, ...]
+    max_grammar_nodes: int = 9
 
 
 class ExpressivityVerdict(StrEnum):
@@ -85,6 +101,7 @@ class BoundaryAssessment:
     covered_obligations: tuple[str, ...] = ()
     construction: str | None = None
     proof_scope: str = 'direct_boolean_entry'
+    proof: InterfaceCertificate | None = None
 
 
 @dataclass(frozen=True, slots=True)

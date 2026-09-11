@@ -429,6 +429,74 @@ class LocalProjectionBindingTests(unittest.TestCase):
         claim['evidence_refs'] = [{'image_id': 'image-0', 'bbox': [0, 0, 1, 1]}]
         self.assertTrue(validator.is_valid(raw))
 
+    def projected_contracts(self):
+        from boundary_repair.domain.specification import (
+            BehaviorConstraint, ClaimKind, ContractSet, Coverage, EntryCase, InterpretationSpace, Witness,
+        )
+        interfaces = self.program.observation_interfaces(self.snap, self.ctx)
+        title = next(i for i in interfaces if i.property_name == 'jsx.attribute:title')
+        child = next(i for i in interfaces if i.property_name == 'jsx.children.contains:strong')
+        must, frames, witnesses = [], [], []
+        for index, (active, hidden) in enumerate(((True, False), (True, True), (False, False), (False, True))):
+            for interface, expected, kind in ((title, 'shown' if active or hidden else 'hidden', ClaimKind.FRAME),
+                                              (child, active and not hidden, ClaimKind.REQUIREMENT)):
+                identifier = f'{kind.value}:{index}'
+                case = EntryCase(interface, (('active', active), ('hidden', hidden)), expected)
+                claim = BehaviorConstraint(identifier, kind, (case.target,), case.relation, ('issue', 'code'),
+                                           'Explicit synthetic role requirement', (case,), 'program_bound')
+                (frames if kind == ClaimKind.FRAME else must).append(claim)
+                witnesses.append(Witness(identifier + ':0', (case.target,), (case.target.context,), SolverStatus.UNKNOWN,
+                                         claim.source_ids, interface, (expected,)))
+        return ContractSet(tuple(must), (), tuple(frames), tuple(witnesses),
+                           InterpretationSpace((), (), SolverStatus.SAT, Coverage.COMPLETE))
+
+    def test_shared_decision_conflicts_but_consumer_decision_has_a_construction(self):
+        from boundary_repair.kernel.files import source_slice
+        contracts = self.projected_contracts()
+        service = ExpressivityLocalization(self.program, LogicAdapter(), maximum=200)
+        result = service.locate(self.task, contracts, self.snap, self.ctx)
+        negatives, positives = [], []
+        for assessment in result.assessments:
+            data, start, end = source_slice(self.snap.root, assessment.boundary.sites[0])
+            expression = data[start:end].decode()
+            if expression == 'active || hidden' and assessment.proof_scope == 'finite_source_projection':
+                negatives.append(assessment)
+            if assessment.verdict == ExpressivityVerdict.FEASIBLE and assessment.proof_scope == 'finite_source_projection':
+                positives.append(assessment)
+        self.assertTrue(negatives)
+        self.assertTrue(all(a.verdict == ExpressivityVerdict.INEXPRESSIBLE for a in negatives))
+        self.assertTrue(positives)
+        self.assertTrue(all(a.construction and a.proof and len(a.covered_obligations) == 8 for a in positives))
+        self.assertTrue(all(a.proof.snapshot_sha256 == (self.snap.tree_sha256,) for a in negatives + positives))
+
+    def test_unrelated_unbound_obligation_remains_explicit_without_erasing_local_proof(self):
+        contracts = self.projected_contracts()
+        unbound = replace(contracts.must[0], constraint_id='unbound', entry_cases=(), binding_status='unbound')
+        contracts = replace(contracts, must=contracts.must + (unbound,))
+        result = ExpressivityLocalization(self.program, LogicAdapter(), maximum=200).locate(self.task, contracts, self.snap, self.ctx)
+        proved = [a for a in result.assessments if a.verdict == ExpressivityVerdict.FEASIBLE]
+        self.assertTrue(proved)
+        self.assertTrue(all('unbound_hard_constraint:unbound' in a.unresolved for a in proved))
+
+    def test_wrong_witness_expectation_or_source_cannot_produce_a_certificate(self):
+        contracts = self.projected_contracts()
+        wrong = replace(contracts.witnesses[0], expected_values=('invented',), source_ids=('other',))
+        contracts = replace(contracts, witnesses=(wrong,) + contracts.witnesses[1:])
+        result = ExpressivityLocalization(self.program, LogicAdapter(), maximum=200).locate(self.task, contracts, self.snap, self.ctx)
+        self.assertTrue(all(a.verdict == ExpressivityVerdict.UNKNOWN for a in result.assessments))
+
+    def test_regular_subset_matches_javascript_on_ascii_boundaries(self):
+        from boundary_repair.kernel.boolean import regex_matches, simple_regex
+        patterns = ['^[ab]+$', '^a|b$', '[^a]?', 'a*b', '.', '\\d+', '[A-Z]+', 'a$']
+        values = ['', 'a', 'b', 'ab', 'ba', 'AA', 'Bz', '12', '1x', 'a\n', 'a\r\n', '\n']
+        rows = [(pattern, flags, value) for pattern in patterns for flags in ('', 'i') for value in values]
+        script = "let s='';process.stdin.on('data',x=>s+=x);process.stdin.on('end',()=>process.stdout.write(JSON.stringify(JSON.parse(s).map(([p,f,v])=>new RegExp(p,f).test(v)))));"
+        expected = json.loads(subprocess.check_output(['node', '-e', script], input=json.dumps(rows).encode()))
+        actual = [regex_matches(simple_regex(pattern, flags), value, flags) for pattern, flags, value in rows]
+        self.assertEqual(actual, expected)
+        for pattern in ('(a+)+', '(?=a)', '(a)\\1', '\\u0061'):
+            self.assertIsNone(simple_regex(pattern))
+
 
 if __name__ == '__main__':
     unittest.main()

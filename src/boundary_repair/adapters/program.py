@@ -16,7 +16,8 @@ from boundary_repair.domain.runtime import RunContext
 from boundary_repair.domain.specification import Coverage, ObservationInterface, ObservationKey, SolverStatus, Term, Witness
 from boundary_repair.domain.task import ProgramIndex, RepositorySnapshot, SourceSpan, TaskInput
 from boundary_repair.kernel.files import allowed_source, source_slice, tree_digest
-from boundary_repair.kernel.terms import evaluate, literal, literal_assignments, symbol, term_from_json
+from boundary_repair.kernel.terms import evaluate, literal, literal_assignments, symbol, term_from_json, typed_key, walk, symbols
+from boundary_repair.kernel.boolean import program_term, program_sort, program_evaluate
 
 
 @dataclass(slots=True)
@@ -160,7 +161,7 @@ class ProgramAdapter:
             return unsupported
         function = self.function_summary(boundary.sites[0], snapshot, context)
         if function is None:
-            return unsupported
+            return self.summarize_projection(boundary, witnesses, snapshot, context)
         params = tuple(function['params'])
         reads = tuple(feature.feature_id for feature in boundary.readable_features)
         if any(name not in params for name in reads):
@@ -194,8 +195,108 @@ class ProgramAdapter:
                     constraints.append(Term('eq', (outputs[i], outputs[j])))
         certified = bool(actual) and complete
         return LocalRepairModel(boundary, tuple(actual), tuple(inputs), tuple(outputs), tuple(constraints),
-                                ProofAssumptions(True, True, certified, True),
-                                Coverage.COMPLETE if certified else Coverage.PARTIAL)
+                                 ProofAssumptions(True, True, certified, True),
+                                 Coverage.COMPLETE if certified else Coverage.PARTIAL)
+
+    def projection_model(self, site: SourceSpan, snapshot: RepositorySnapshot,
+                         context: RunContext) -> tuple[dict, dict, str] | None:
+        """Locate a source-bound edit and its fixed downstream projections in the trusted parser result."""
+        self.index(snapshot, context)
+        for file in self._data['files']:
+            for model in file.get('local_models', []):
+                for edit in model['edits']:
+                    if SourceSpan(**edit['site']) == site:
+                        key = hashlib.sha256(json.dumps(model, sort_keys=True).encode()).hexdigest()
+                        return model, edit, key
+        return None
+
+    def summarize_projection(self, boundary: RepairBoundary, witnesses: tuple[Witness, ...],
+                             snapshot: RepositorySnapshot, context: RunContext) -> LocalRepairModel:
+        """Pull sourced scalar and JSX obligations through a fixed, pure local continuation."""
+        unavailable = LocalRepairModel(boundary, (), (), (), (), ProofAssumptions(False, False, False, False),
+                                      Coverage.PARTIAL, proof_scope='finite_source_projection')
+        record = self.projection_model(boundary.sites[0], snapshot, context)
+        if record is None:
+            return unavailable
+        model, edit, key = record
+        sorts = {item['name']: item['sort'] for item in model['inputs']}
+        reads = tuple(feature.feature_id for feature in boundary.readable_features)
+        if not set(reads) <= set(sorts):
+            return unavailable
+        directory = {item.interface_id: item for item in self.observation_interfaces(snapshot, context)}
+        relevant = tuple(w for w in witnesses if w.interface is not None
+                         and w.interface.summary_key.startswith(key + ':'))
+        terms = [program_term(edit['expression'])]
+        for continuation in edit['continuations']:
+            terms.extend(program_term(raw) for raw in [continuation['expression'], *continuation['conditions']])
+        declared = {**sorts, '$edit': edit['output_sort']}
+        if any(program_sort(term, declared) is None for term in terms):
+            return replace(unavailable, diagnostics=('unsupported_projection_algebra_or_rule',))
+        literal_values = [program_evaluate(node, {}) for term in terms for node in walk(term) if node.op == 'literal']
+        literal_values += [value for witness in relevant for value in witness.expected_values]
+        literals = tuple(dict((typed_key(value), value) for value in literal_values).values())
+        input_values = [value for witness in relevant for target in witness.observations
+                        for value in (literal_assignments(target.context) or {}).values()]
+        domain_values = tuple(dict((typed_key(value), value) for value in literals + tuple(input_values)).values())
+        domain = (False, True) if edit['output_sort'] == 'boolean' else tuple(
+            value for value in domain_values if program_sort(literal(value), {}) == edit['output_sort'])
+        if not domain:
+            return replace(unavailable, diagnostics=('no_sourced_local_output_domain',))
+        actual, inputs, outputs, constraints, allowed, diagnostics = [], [], [], [], [], []
+        complete = True
+        has_regex = any(node.op == 'regex_test' for term in terms for node in walk(term))
+        for witness in relevant:
+            interface = witness.interface
+            values = literal_assignments(witness.observations[0].context) if len(witness.observations) == 1 else None
+            if (directory.get(interface.interface_id) != interface or not witness.source_ids
+                    or len(witness.expected_values) != 1 or values is None or set(values) != set(sorts)
+                    or any(program_sort(literal(values[name]), {}) != sort for name, sort in sorts.items())):
+                complete = False
+                diagnostics.append('invalid_projection_witness:' + witness.witness_id)
+                continue
+            if has_regex and any(isinstance(v, str) and not v.isascii() for v in values.values()):
+                complete = False
+                diagnostics.append('regular_rule_non_ascii_entry:' + witness.witness_id)
+                continue
+            number = int(interface.summary_key.rsplit(':', 1)[1])
+            observation = model['observations'][number]
+            continuation = next(item for item in edit['continuations'] if item['observation'] == number)
+            expression = program_term(continuation['expression'])
+            conditions = tuple(program_term(raw) for raw in continuation['conditions'])
+            base_conditions = tuple(program_term(raw) for raw in observation['conditions'])
+            if observation['projection'] != 'presence' and not all(program_evaluate(g, values) for g in base_conditions):
+                complete = False
+                diagnostics.append('unreachable_scalar_projection:' + witness.witness_id)
+                continue
+            admissible = []
+            for value in domain:
+                environment = {**values, '$edit': value}
+                reached = all(program_evaluate(g, environment) for g in conditions)
+                if not reached and observation['projection'] != 'presence':
+                    continue
+                projected = bool(reached and program_evaluate(expression, environment)) if observation['projection'] == 'presence' else program_evaluate(expression, environment)
+                if typed_key(projected) == typed_key(witness.expected_values[0]):
+                    admissible.append(value)
+            index = len(actual)
+            actual.append(replace(witness, reachability=SolverStatus.SAT))
+            inputs.append(Term('and', tuple(Term('eq', (symbol(name), literal(values[name]))) for name in reads)))
+            output = symbol(f'local_out:{index}')
+            outputs.append(output)
+            allowed.append(tuple(admissible))
+            constraints.append(Term('domain', (output,) + tuple(literal(value) for value in admissible))
+                               if admissible else literal(False))
+        for index, left in enumerate(inputs):
+            values = literal_assignments(left)
+            for previous in range(index):
+                other = literal_assignments(inputs[previous])
+                if all(typed_key(values[name]) == typed_key(other[name]) for name in reads):
+                    constraints.append(Term('eq', (outputs[index], outputs[previous])))
+        proved = bool(actual) and complete
+        atoms = tuple(term for term in terms if '$edit' not in symbols(term))
+        return LocalRepairModel(boundary, tuple(actual), tuple(inputs), tuple(outputs), tuple(constraints),
+            ProofAssumptions(True, True, proved, True), Coverage.COMPLETE if proved else Coverage.PARTIAL,
+            tuple(diagnostics), tuple(allowed), tuple(w.witness_id for w in actual), 'finite_source_projection',
+            literals, atoms, edit['output_sort'], tuple(domain))
 
     def effects(self, plan: PatchPlan, snapshot: RepositorySnapshot, context: RunContext) -> tuple[Effect, ...]:
         """A5: return a local property effect where justified, otherwise explicit unknown effects.
