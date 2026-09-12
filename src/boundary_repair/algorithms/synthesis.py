@@ -11,7 +11,8 @@ from boundary_repair.domain.repair import (
 from boundary_repair.domain.runtime import RunContext
 from boundary_repair.domain.specification import ContractSet, Coverage
 from boundary_repair.domain.task import RepositorySnapshot, TaskInput
-from boundary_repair.kernel.boolean import synthesize_boolean
+from boundary_repair.kernel.boolean import synthesize_boolean, synthesize_finite
+from boundary_repair.kernel.terms import literal_assignments, typed_key
 from boundary_repair.kernel.files import source_slice
 from boundary_repair.kernel.retrieval import syntax_holes
 from boundary_repair.ports import LogicPort, ModelPort, ProgramPort
@@ -254,6 +255,35 @@ class ScopeSynthesis:
     response_tokens: int = 8000
     max_context_chars: int = 100000
 
+    def construction_proposals(self, contracts: ContractSet, localization: LocalizationResult,
+                               snapshot: RepositorySnapshot, context: RunContext) -> tuple:
+        """Propose finite constructions from shared summaries without localization proofs or pruning."""
+        expected = {f'{claim.constraint_id}:{i}': (claim, case) for claim in contracts.must + contracts.frames
+                    for i, case in enumerate(claim.entry_cases)}
+        result = []
+        for assessment in localization.assessments:
+            model = self.program.summarize(assessment.boundary, contracts.witnesses, snapshot, context)
+            if model.coverage != Coverage.COMPLETE or not model.witnesses or not all((
+                    model.assumptions.reads_complete, model.assumptions.pure_deterministic,
+                    model.assumptions.witnesses_reachable, model.assumptions.downstream_sound)):
+                continue
+            valid = all(w.witness_id in expected and w.interface == expected[w.witness_id][1].interface
+                        and w.observations == (expected[w.witness_id][1].target,)
+                        and w.source_ids == expected[w.witness_id][0].source_ids
+                        and len(w.expected_values) == 1
+                        and typed_key(w.expected_values[0]) == typed_key(expected[w.witness_id][1].expected)
+                        for w in model.witnesses)
+            if not valid:
+                continue
+            allowed = model.allowed_outputs or tuple((expected[w.witness_id][1].expected,) for w in model.witnesses)
+            cases = tuple((literal_assignments(t), values) for t, values in zip(model.input_terms, allowed))
+            expression = synthesize_finite(tuple(f.feature_id for f in model.boundary.readable_features), cases,
+                model.grammar_atoms, model.grammar_literals, model.output_sort, context)
+            if expression is not None:
+                result.append(replace(assessment, construction=expression.source,
+                    covered_obligations=tuple(w.witness_id for w in model.witnesses), proof_scope=model.proof_scope))
+        return tuple(result)
+
     def synthesize(self, task: TaskInput, contracts: ContractSet, localization: LocalizationResult,
                    snapshot: RepositorySnapshot, context: RunContext) -> SynthesisResult:
         """Run G1-G3 and syntax/hash materialization once; keep unresolved obligations in output."""
@@ -263,12 +293,13 @@ class ScopeSynthesis:
         import hashlib
         scope = self.program.source_scope(snapshot, context, task.problem_statement)
         projected = tuple(a for a in localization.assessments if a.verdict == ExpressivityVerdict.FEASIBLE
-                          and a.proof_scope == 'finite_source_projection' and a.certificate
+                          and a.certificate
                           and a.proof is not None and a.construction is not None and len(a.boundary.sites) == 1)
+        if localization.assessments and all('plain_lexical_control' in a.unresolved for a in localization.assessments):
+            projected = self.construction_proposals(contracts, localization, snapshot, context)
         hard = contracts.must + contracts.frames
         if (projected and contracts.must and contracts.extraction_status != 'unavailable'
-                and all(c.entry_cases and all(case.interface.kind == 'local_projection' for case in c.entry_cases)
-                        for c in hard)):
+                and any(c.entry_cases for c in hard)):
             plans = self.projection_plans(contracts, scope, localization, projected, snapshot, context)
             plan = self.select_projection_scope(plans, contracts, context)
             self.program.freeze_plan(plan, context)
@@ -376,6 +407,12 @@ class ScopeSynthesis:
                            unresolved=('finite_entry_domain_only', 'entry_case_evidence_interpretation_not_verified',
                                        'JSX_construction_not_browser_visibility', 'candidate_pool_minimum_not_global_minimum'))
             checked = self.program.assess_projection_plan(plan, snapshot, context)
+            complete = not checked.unresolved and not checked.violated and all(
+                c.constraint_id in checked.covered for c in contracts.must + contracts.frames)
+            if not complete:
+                plan = replace(plan, generation_mode='guided_partial', edit_scope=base.edit_scope,
+                    enforced_obligations=checked.covered,
+                    unresolved=tuple(dict.fromkeys(base.unresolved + checked.unresolved + ('partial_obligations_only',))))
             plans.append(replace(plan, semantic_check=checked, effects=checked.effects))
         return tuple(plans)
 
@@ -391,7 +428,7 @@ class ScopeSynthesis:
             frames = tuple(c.constraint_id for c in contracts.frames if c.constraint_id not in covered)
             extra = len({e.target.entity_id + ':' + e.target.property_name for e in checked.effects
                          if e.relation.value == 'effect:possible_extra_property'}) if checked else 1
-            semantic = SemanticScopeCost(len(must), len(frames), len(frames), extra, 0,
+            semantic = SemanticScopeCost(len(must), len(frames), len(frames), extra, checked.invented_constants if checked else 0,
                                          checked.ast_nodes if checked else 0)
             ranges = scope_ranges(plan.edit_scope)
             size = sum(end - start for _, start, end in ranges)
@@ -400,8 +437,9 @@ class ScopeSynthesis:
             targets = tuple(h.hole_id for h in plan.holes) or tuple(b.block_id for b in plan.edit_scope.blocks)
             comparisons.append(PlanAssessment(plan.plan_id, plan.boundary_ids, targets, ranges, legacy,
                                               must, (), frames, (), rank, semantic))
-            if checked is None or (not checked.unresolved and not checked.violated and checked.baseline_mismatches
-                                   and not must and not frames):
+            if checked is None or (not checked.violated and checked.baseline_mismatches
+                                   and (plan.generation_mode == 'guided_partial' and plan.enforced_obligations
+                                        or not checked.unresolved and not must and not frames)):
                 ranked.append((semantic, rank, plan.plan_id, replace(plan, cost=legacy, semantic_cost=semantic)))
         winner = min(ranked, key=lambda row: row[:3])[3]
         comparisons.sort(key=lambda row: (row.semantic_cost, row.localization_rank, row.plan_id))

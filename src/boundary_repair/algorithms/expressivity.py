@@ -70,6 +70,7 @@ class ExpressivityLocalization:
                            coverage=model.coverage if valid else Coverage.PARTIAL)
         constraints = list(model.constraints)
         covered = set()
+        allowed = []
         reliable = model.coverage == Coverage.COMPLETE
         obligations = {f'{claim.constraint_id}:{number}': (claim, case)
                        for claim in contracts.must + contracts.frames
@@ -87,14 +88,18 @@ class ExpressivityLocalization:
             relation = substitute(case.relation, {'return': model.output_terms[index]})
             constraints.append(relation)
             covered.add(witness.witness_id)
-        if (set(obligations) - covered
-                or any(not claim.entry_cases for claim in contracts.must + contracts.frames)):
+            allowed.append((case.expected,))
+        relevant = {key for key, (_, case) in obligations.items()
+                    if any(case.interface.site.path == site.path and case.interface.site.start_byte == site.start_byte
+                           and case.interface.site.end_byte == site.end_byte for site in boundary.sites)}
+        if relevant - covered:
             reliable = False
         diagnostics = tuple('unbound_hard_constraint:' + claim.constraint_id
                             for claim in contracts.must + contracts.frames if not claim.entry_cases)
         diagnostics += tuple('uncovered_entry_case:' + key for key in sorted(set(obligations) - covered))
         return replace(model, constraints=tuple(constraints), coverage=Coverage.COMPLETE if reliable else Coverage.PARTIAL,
-                       diagnostics=model.diagnostics + diagnostics)
+                       diagnostics=model.diagnostics + diagnostics,
+                       allowed_outputs=tuple(allowed), covered_obligations=tuple(sorted(covered)))
 
     def assess_expressivity(self, model: LocalRepairModel, contracts: ContractSet,
                             context: RunContext) -> BoundaryAssessment:
@@ -129,7 +134,10 @@ class ExpressivityLocalization:
             proof = InterfaceCertificate(model.covered_obligations, model.input_terms, model.allowed_outputs,
                 model.output_domain, model.assumptions,
                 tuple(dict.fromkeys(w.interface.snapshot_sha256 for w in model.witnesses)),
-                tuple(dict.fromkeys(w.interface.summary_key for w in model.witnesses)))
+                tuple(dict.fromkeys(w.interface.summary_key for w in model.witnesses)),
+                boundary_id=model.boundary.boundary_id,
+                readable_features=tuple(f.feature_id for f in model.boundary.readable_features),
+                specification_policy=contracts.specification_policy)
             certificate = f'projection-v1:{model.boundary.boundary_id}:{source_version}:{answer.certificate}'
             return BoundaryAssessment(model.boundary, verdict, required, certificate,
                 model.diagnostics + ('proof_scope:declared_entry_and_source_projection',
@@ -138,9 +146,25 @@ class ExpressivityLocalization:
                 model.covered_obligations, construction, model.proof_scope, proof)
         if verdict == ExpressivityVerdict.FEASIBLE and len(required) <= 8:
             required = self.minimum_features(model, context)
+        construction = None
+        if verdict == ExpressivityVerdict.FEASIBLE:
+            cases = tuple((literal_assignments(term), allowed) for term, allowed in zip(model.input_terms, model.allowed_outputs))
+            expression = synthesize_finite(tuple(f.feature_id for f in required), cases, model.grammar_atoms,
+                                          model.grammar_literals, 'boolean', context)
+            if expression is None:
+                return BoundaryAssessment(model.boundary, ExpressivityVerdict.UNKNOWN, required, None,
+                    model.diagnostics + ('finite_grammar_realization_not_found',), model.covered_obligations)
+            construction = expression.source
+        proof = InterfaceCertificate(model.covered_obligations, model.input_terms, model.allowed_outputs,
+            model.output_domain, model.assumptions,
+            tuple(dict.fromkeys(w.interface.snapshot_sha256 for w in model.witnesses)), (),
+            boundary_id=model.boundary.boundary_id,
+            readable_features=tuple(f.feature_id for f in model.boundary.readable_features),
+            specification_policy=contracts.specification_policy)
         return BoundaryAssessment(model.boundary, verdict, required, certificate,
-                                  ('proof_scope:direct_boolean_function_entry_not_UI_reachability',
-                                   'entry_case_evidence_interpretation_not_verified'))
+                                  model.diagnostics + ('proof_scope:direct_boolean_function_entry_not_UI_reachability',
+                                   'entry_case_evidence_interpretation_not_verified'), model.covered_obligations,
+                                   construction, model.proof_scope, proof)
 
     def minimum_features(self, model: LocalRepairModel, context: RunContext) -> tuple[Feature, ...]:
         """Find a smallest read subset by adding equal-output constraints for input collisions.

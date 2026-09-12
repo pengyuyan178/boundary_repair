@@ -462,7 +462,7 @@ class AssetAvailabilityV3Tests(unittest.TestCase):
 
         with TemporaryDirectory() as temporary:
             conf = config(Path(temporary), parser=False)
-            for schema_name in ("evidence.v3", "evidence.v4", "edits.v3", "edits.v4", "edits.v5"):
+            for schema_name in ("evidence.v3", "evidence.v4", "evidence.v6", "edits.v3", "edits.v4", "edits.v5"):
                 with self.subTest(schema_name=schema_name):
                     with self.assertRaisesRegex(ConfigurationError, "output_schema_missing"):
                         response_format(ModelRequest("system", "prompt", (), schema_name, 4), conf)

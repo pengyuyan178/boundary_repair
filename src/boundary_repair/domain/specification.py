@@ -49,6 +49,7 @@ class EvidenceClaim:
     targets: tuple["ObservationKey", ...] = ()
     description: str = ""
     entry_cases: tuple["EntryCase", ...] = ()
+    binding_alternatives: tuple[tuple["EntryCase", ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +126,16 @@ class EntryCase:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservationScenario:
+    """Program-owned finite entry valuation; it supplies no desired output or UI reachability claim."""
+    scenario_id: str
+    interface: ObservationInterface
+    inputs: tuple[tuple[str, Scalar], ...]
+    conditions: tuple[Term, ...] = ()
+    provenance: str = 'declared_entry_source_literal_domain'
+
+
+@dataclass(frozen=True, slots=True)
 class Witness:
     """原始或经证明可达的情境；不能把臆造执行情境当作剪枝证明。"""
     witness_id: str
@@ -147,6 +158,7 @@ class BehaviorConstraint:
     description: str = ''
     entry_cases: tuple[EntryCase, ...] = ()
     binding_status: str = 'unbound'
+    binding_alternatives: tuple[tuple[EntryCase, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +173,8 @@ class ContractSet:
     extraction_status: str = 'partial'
     interpretation_groups: tuple[tuple[tuple[str, ...], ...], ...] = ()
     sources: tuple[SourceRef, ...] = ()
+    bindings: tuple[EntityBinding, ...] = ()
+    specification_policy: str = 'open_world'
 
 
 @dataclass(frozen=True, slots=True)

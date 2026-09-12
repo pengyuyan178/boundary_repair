@@ -1,7 +1,7 @@
 """Normalize model evidence into auditable claims; model assertions never certify code reachability."""
 import json
 import math
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from boundary_repair.domain.errors import ValidationError
 from boundary_repair.domain.specification import (
@@ -10,6 +10,7 @@ from boundary_repair.domain.specification import (
     EvidenceClaim,
     EntryCase,
     ObservationInterface,
+    ObservationScenario,
     ObservationKey,
     Scalar,
     Term,
@@ -724,3 +725,103 @@ def parse_evidence_v4(text: str, task: TaskInput, code: tuple[dict[str, object],
                       interfaces: tuple[ObservationInterface, ...]) -> EvidenceBundle:
     """Compile v4 bindings without silently upgrading a free-text v3 target."""
     return _parse_evidence(text, task, code, interfaces)
+
+
+def evidence_request_v6(task: TaskInput, code: tuple[dict[str, object], ...], tokens: int,
+                        interfaces: tuple[ObservationInterface, ...],
+                        scenarios: tuple[ObservationScenario, ...]) -> ModelRequest:
+    """Ask for sourced associations to program-owned contexts without model-authored input valuations."""
+    schema = evidence_output_schema_v3()
+    claim = schema['properties']['frames']['items']
+    association = object_schema({
+        'scenario_id': {'type': 'string', **({'enum': [s.scenario_id for s in scenarios]} if scenarios else {})},
+        'expected': {'type': ['boolean', 'string', 'number', 'null']},
+    })
+    alternatives = {'type': 'array', 'maxItems': 4 if scenarios else 0,
+                    'items': object_schema({'cases': {'type': 'array', 'items': association, 'maxItems': 16}})}
+    claim['properties']['binding_alternatives'] = alternatives
+    claim['required'].append('binding_alternatives')
+    schema['properties']['observations']['items'] = object_schema({
+        **claim['properties'], 'binding_alternatives': {'type': 'array', 'maxItems': 0, 'items': alternatives['items']}})
+    catalog = evidence_catalog_v3(task, code)
+    bind_reference_schema(schema, catalog)
+    prompt = json.dumps({'evidence_catalog': catalog,
+                         'observation_interfaces': [asdict(i) for i in interfaces],
+                         'scenario_catalog': [{'scenario_id': s.scenario_id, 'interface_id': s.interface.interface_id,
+                            'inputs': dict(s.inputs), 'conditions': [asdict(t) for t in s.conditions],
+                            'provenance': s.provenance} for s in scenarios],
+                         'scenario_coverage': 'bounded_declared_entries_not_exhaustive_UI_states',
+                         'output_schema': schema}, ensure_ascii=False)
+    system = EVIDENCE_V3_SYSTEM.replace('evidence.v3', 'evidence.v6') + (
+        ' Each claim also requires binding_alternatives. Each alternative contains conjunctive cases '
+        '[{scenario_id,expected}]. Alternative lists are mutually exclusive interpretations, not extra '
+        'requirements. An empty alternatives list or an empty cases alternative preserves an unresolved '
+        'binding. The program owns every scenario input, code location, consumer property and premise. '
+        'Associate only scenarios whose entry conditions AND observed property are supported by the '
+        'cited issue or image. Also cite supplied base code overlapping each associated observer. '
+        'expected is a desired scalar property supported by normative evidence, never copied from the '
+        'buggy code. A scenario is a finite local entry valuation, not an observed application execution. '
+        'JSX construction does not prove visibility, CSS layout or callback effects. Do not invent '
+        'parameters, values, reachability, bindings, IDs or proof flags. Preserve unsupported requirements '
+        'verbatim with empty binding_alternatives. Observations must have no binding alternatives. '
+        'Frames require positive preservation evidence. Never infer a frame from silence. '
+        'Use at most sixteen distinct contexts across all binding alternatives in one claim.'
+    )
+    return ModelRequest(system, prompt, task.assets, 'evidence.v6', tokens, schema)
+
+
+def parse_evidence_v6(text: str, task: TaskInput, code: tuple[dict[str, object], ...],
+                      interfaces: tuple[ObservationInterface, ...],
+                      scenarios: tuple[ObservationScenario, ...]) -> EvidenceBundle:
+    """Resolve context IDs through the frozen directory and validate every possible source binding."""
+    data = require_keys(strict_json(text), {'observations', 'requirement_groups', 'frames'})
+    if not all(isinstance(data[key], list) for key in data):
+        raise ValidationError('invalid_evidence_v6_lists')
+    directory = {s.scenario_id: s for s in scenarios}
+    records = list(data['observations'])
+    for raw_group in data['requirement_groups']:
+        group = require_keys(raw_group, {'alternatives'})
+        if not isinstance(group['alternatives'], list):
+            raise ValidationError('invalid_requirement_alternatives')
+        for raw_alternative in group['alternatives']:
+            alternative = require_keys(raw_alternative, {'all_of'})
+            if not isinstance(alternative['all_of'], list):
+                raise ValidationError('invalid_requirement_conjunction')
+            records.extend(alternative['all_of'])
+    records.extend(data['frames'])
+    alternatives_by_claim = []
+    for record in records:
+        item = require_keys(record, {'statement', 'formalization', 'targets', 'evidence_refs', 'binding_alternatives'})
+        options = item.pop('binding_alternatives')
+        if not isinstance(options, list) or len(options) > 4:
+            raise ValidationError('invalid_binding_alternatives')
+        alternatives, union = [], []
+        for raw_option in options:
+            option = require_keys(raw_option, {'cases'})
+            if not isinstance(option['cases'], list) or len(option['cases']) > 16:
+                raise ValidationError('invalid_binding_cases')
+            entries = []
+            for raw_case in option['cases']:
+                case = require_keys(raw_case, {'scenario_id', 'expected'})
+                scenario = directory.get(text_field(case['scenario_id'], 128))
+                if scenario is None or scenario.interface not in interfaces:
+                    raise ValidationError('unknown_program_scenario')
+                entry = {'interface_id': scenario.interface.interface_id,
+                         'inputs': [{'parameter': name, 'value': value} for name, value in scenario.inputs],
+                         'expected': case['expected']}
+                if entry not in entries:
+                    entries.append(entry)
+                if entry not in union:
+                    union.append(entry)
+            alternatives.append(entries)
+        item['entry_cases'] = union
+        alternatives_by_claim.append(alternatives)
+    bundle = parse_evidence_v4(json.dumps(data, ensure_ascii=False), task, code, interfaces)
+    claims = []
+    for claim, options in zip(bundle.claims, alternatives_by_claim):
+        if claim.kind == ClaimKind.OBSERVATION and options:
+            raise ValidationError('observations_cannot_supply_binding_alternatives')
+        bindings = tuple(_entry_cases(option, interfaces, claim.kind) for option in options)
+        common = tuple(case for case in bindings[0] if all(case in option for option in bindings[1:])) if bindings else ()
+        claims.append(replace(claim, entry_cases=common, binding_alternatives=bindings))
+    return replace(bundle, claims=tuple(claims))

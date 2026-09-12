@@ -308,6 +308,14 @@ def generation_handoff(plan: PatchPlan) -> dict:
                'interpretation_groups': plain(plan.interpretation_groups),
                'evidence_sources': plain(plan.evidence_sources),
                'unresolved': plan.unresolved, 'scope_diagnostics': scope.diagnostics}
+    if plan.enforced_obligations:
+        payload['bound_property_checks'] = {
+            'obligation_ids': plan.enforced_obligations,
+            'scope': 'declared_finite_entries_only',
+            'proposals': [{'site': plain(hole.site), 'source': filling.source_text}
+                          for hole, filling in zip(plan.holes, plan.fixed_fillings)],
+            'policy': 'proposals_are_not_extra_edit_targets; final_transaction_rechecks_bound_properties',
+        }
     if plan.scope_comparison:
         payload['scope_selection'] = {'plan_id': plan.plan_id, 'cost': plain(plan.cost),
                                       'policy': plan.selection_policy,

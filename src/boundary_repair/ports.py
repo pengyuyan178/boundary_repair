@@ -92,6 +92,10 @@ class ProgramPort(RepositoryPort, PatchPort, Protocol):
         """Declare exact code observations supported within the frozen evidence scope."""
         ...
 
+    def observation_scenarios(self, snapshot: RepositorySnapshot, context: RunContext) -> tuple:
+        """Return program-owned finite input contexts, without desired outputs."""
+        ...
+
     def assess_projection_plan(self, plan: PatchPlan, snapshot: RepositorySnapshot,
                                context: RunContext) -> PlanSemantics:
         """Check the joint constructions against the declared original entry projections."""

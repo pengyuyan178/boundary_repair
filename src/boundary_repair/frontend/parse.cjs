@@ -228,6 +228,31 @@ function parseFile(file) {
       }
     }
     if (!valid) return;
+    const directReturn = ts.isBlock(fn.body) && fn.body.statements.length === 1 && ts.isReturnStatement(fn.body.statements[0])
+      ? fn.body.statements[0].expression : !ts.isBlock(fn.body) ? fn.body : null;
+    const directNames = fn.parameters.map(p => ts.isIdentifier(p.name) ? p.name.text : null);
+    if (directReturn && directNames.every(Boolean) && booleanTerm(directReturn, directNames)
+        && fn.parameters.every(p => !p.type || p.type.kind === ts.SyntaxKind.BooleanKeyword)) {
+      for (const parameter of directNames) sorts.set(parameter, 'boolean');
+    }
+    const reads = new Set(), declarations = [];
+    const references = [fn.body];
+    while (references.length) {
+      const node = references.pop();
+      if (ts.isVariableDeclaration(node)) declarations.push(node);
+      if (ts.isIdentifier(node) && !(ts.isVariableDeclaration(node.parent) && node.parent.name === node)) reads.add(node.text);
+      ts.forEachChild(node, child => { references.push(child); });
+    }
+    function inert(node) {
+      if (!node) return true;
+      if (ts.isParenthesizedExpression(node)) return inert(node.expression);
+      if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node) ||
+          [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword, ts.SyntaxKind.NullKeyword].includes(node.kind)) return true;
+      if (ts.isArrayLiteralExpression(node)) return node.elements.every(inert);
+      return ts.isObjectLiteralExpression(node) && node.properties.every(p => ts.isPropertyAssignment(p)
+        && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && inert(p.initializer));
+    }
+    const irrelevant = new Set(declarations.filter(d => ts.isIdentifier(d.name) && !reads.has(d.name.text) && inert(d.initializer)));
     const purity = [fn.body];
     while (purity.length) {
       const node = purity.pop();
@@ -239,7 +264,10 @@ function parseFile(file) {
           || ts.isSpreadAssignment(node) || ts.isDeleteExpression(node)
           || (ts.isPrefixUnaryExpression(node) && [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator))
           || (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
-              && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment)) return;
+              && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment)) {
+        unsupported.add('local_model_effect_or_call:' + name);
+        return;
+      }
       ts.forEachChild(node, child => { purity.push(child); });
     }
     const candidates = new Map(), observations = [], initializers = [];
@@ -343,6 +371,14 @@ function parseFile(file) {
     }
     function presence(node, env, tag, replacement = null) {
       if (ts.isParenthesizedExpression(node)) return presence(node.expression, env, tag, replacement);
+      if (ts.isBinaryExpression(node) && [ts.SyntaxKind.AmpersandAmpersandToken,
+          ts.SyntaxKind.BarBarToken].includes(node.operatorToken.kind)) {
+        const guard = value(node.left, env, 'boolean', replacement);
+        const right = presence(node.right, env, tag, replacement);
+        if (!replacement) remember(node.left, env, 'boolean', true);
+        return guard && right ? {op: 'ite', args: node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+          ? [guard, right, lit(false)] : [guard, lit(false), right]} : null;
+      }
       if (ts.isConditionalExpression(node)) {
         if (!replacement) remember(node.condition, env, 'boolean', true);
         const args = [value(node.condition, env, 'boolean', replacement), presence(node.whenTrue, env, tag, replacement),
@@ -418,9 +454,12 @@ function parseFile(file) {
         for (const declaration of statement.declarationList.declarations)
           if (ts.isIdentifier(declaration.name)) env.set(declaration.name.text, {node: null, env: null});
       for (let index = 0; index < statements.length; index++) {
-        const statement = statements[index];
+        const originalStatement = statements[index];
+        if (ts.isVariableStatement(originalStatement) && originalStatement.declarationList.declarations.every(d => irrelevant.has(d))) continue;
+        const statement = originalStatement;
         if (ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.Const)) {
           for (const declaration of statement.declarationList.declarations) {
+            if (irrelevant.has(declaration)) continue;
             if (!ts.isIdentifier(declaration.name) || !declaration.initializer || !atomic(declaration.initializer)) { valid = false; return; }
             initializers.push({node: declaration.initializer, env: new Map(env)});
             env.set(declaration.name.text, {node: declaration.initializer, env: new Map(env)});
@@ -486,7 +525,10 @@ function parseFile(file) {
       if (site && continuations.length === groups.length) edits.push({site, output_sort: candidate.sort, expression, continuations});
     }
     if (!edits.length || sorts.size > 8) return;
-    const model = {owner: ownerSite, name, inputs: [...sorts].sort().map(([name, sort]) => ({name, sort})), edits,
+    const declarationBinding = ts.isVariableDeclaration(fn.parent) ? fn.parent.name.getText(sf) : name;
+    const headerHash = crypto.createHash('sha256').update(file.source.slice(fn.getStart(sf), fn.body.getStart(sf)), 'utf8').digest('hex');
+    const model = {owner: ownerSite, name, declaration_binding: declarationBinding, header_sha256: headerHash,
+      inputs: [...sorts].sort().map(([name, sort]) => ({name, sort})), edits,
       observations: groups.map(group => ({site: group[0].site, property_name: group[0].property, output_sort: group[0].sort,
         projection: group[0].projection, ...projection(group)})),
       premises: ['pure_declared_entry_model', 'plain_data_without_getters_or_proxies',
@@ -552,8 +594,7 @@ function parseFile(file) {
             premise: 'direct_function_entry_boolean_arguments_identity_continuation'});
         }
       }
-      const legacy = expression && params.every(Boolean) && booleanTypes && booleanTerm(expression, params);
-      if (!legacy) addLocalModel(node, functionSite, name);
+      addLocalModel(node, functionSite, name);
     }
     if (ts.isIfStatement(node) && atomic(node.expression)) span(node.expression, 'Condition', owner);
     if (ts.isConditionalExpression(node) && atomic(node.condition)) span(node.condition, 'Condition', owner);

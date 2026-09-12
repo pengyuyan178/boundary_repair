@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from helpers import config, context, parser_module, snapshot, structured_evidence, aligned_evidence, task
+from helpers import catalogue_response, config, context, parser_module, snapshot, structured_evidence, aligned_evidence, task
 from boundary_repair.adapters.logic import LogicAdapter
 from boundary_repair.adapters.program import ProgramAdapter
 from boundary_repair.algorithms.expressivity import ExpressivityLocalization
@@ -101,15 +101,15 @@ class GenerationV3Tests(unittest.TestCase):
             snap, ctx = snapshot(root), context()
             program, logic, model = ProgramAdapter(config(root)), LogicAdapter(), Mock()
             model.complete.side_effect = lambda request, ctx: Mock(
-                text=json.dumps(aligned_evidence(json.loads(request.prompt))))
+                text=json.dumps(catalogue_response(aligned_evidence(json.loads(request.prompt)), json.loads(request.prompt))))
             contracts = SpecificationRecovery(model, program, logic).recover(task(), snap, ctx)
             localized = ExpressivityLocalization(program, logic).locate(task(), contracts, snap, ctx)
-            with patch('boundary_repair.algorithms.synthesis.synthesize_boolean', return_value=None):
-                with self.assertRaisesRegex(NoAdmissiblePatch, 'certified_boolean_generation_failed'):
+            with patch.object(ProgramAdapter, 'compile', side_effect=ValidationError('synthetic_certificate_recheck_failed')):
+                with self.assertRaisesRegex(ValidationError, 'synthetic_certificate_recheck_failed'):
                     ScopeSynthesis(model, program, logic).synthesize(task(), contracts, localized, snap, ctx)
             self.assertEqual(model.complete.call_count, 1)
             frozen = config(root).results_root / ctx.run_id / 'cases' / ctx.instance_id / 'trajectory/generation_plan.json'
-            self.assertEqual(json.loads(frozen.read_text(encoding='utf-8'))['generation_mode'], 'certified')
+            self.assertEqual(json.loads(frozen.read_text(encoding='utf-8'))['generation_mode'], 'certified_projection')
 
     def test_groups_and_citations_survive_generic_plan(self):
         with TemporaryDirectory() as raw:

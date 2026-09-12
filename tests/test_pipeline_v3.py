@@ -13,7 +13,7 @@ from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from helpers import config, context
+from helpers import catalogue_response, config, context
 
 from boundary_repair.adapters.logic import LogicAdapter
 from boundary_repair.adapters.program import ProgramAdapter
@@ -64,8 +64,8 @@ class V3ModelDouble:
         """Provide deterministic v3 JSON and account for each synthetic model response."""
         self.requests.append(request)
         run_context.budget.begin_model_call(request.max_output_tokens)
-        if request.schema_name == "evidence.v4":
-            text = "not-json" if self.evidence == "invalid" else json.dumps(self._evidence(request))
+        if request.schema_name == "evidence.v6":
+            text = "not-json" if self.evidence == "invalid" else json.dumps(catalogue_response(self._evidence(request), json.loads(request.prompt)))
         elif request.schema_name == "edits.v5":
             if self.before_edit is not None:
                 self.before_edit(request)
@@ -207,7 +207,7 @@ class PipelineV3Tests(unittest.TestCase):
         self.assertEqual(trace.artifacts["contracts.json"].extraction_status, "partial")
         self.assertEqual(model.edit_calls, 1)
         self.assertEqual(
-            [request.schema_name for request in model.requests], ["evidence.v4", "edits.v5"]
+            [request.schema_name for request in model.requests], ["evidence.v6", "edits.v5"]
         )
 
     def test_invalid_evidence_uses_raw_evidence_once(self) -> None:
@@ -218,7 +218,7 @@ class PipelineV3Tests(unittest.TestCase):
         self.assertEqual(result.plan.generation_mode, "raw_evidence")
         self.assertEqual(result.patch.application_check, "passed")
         self.assertEqual(
-            [request.schema_name for request in model.requests], ["evidence.v4", "edits.v5"]
+            [request.schema_name for request in model.requests], ["evidence.v6", "edits.v5"]
         )
         self.assertEqual(model.edit_calls, 1)
 

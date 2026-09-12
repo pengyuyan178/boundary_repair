@@ -83,7 +83,7 @@ def _frozen_generation_mode(case_root: Path) -> str | None:
         mode = plan.get("generation_mode")
     except (OSError, UnicodeDecodeError, ValidationError):
         return None
-    return mode if mode in {"certified", "certified_projection", "scoped", "raw_evidence"} else None
+    return mode if mode in {"certified", "certified_projection", "guided_partial", "scoped", "raw_evidence"} else None
 
 
 def _semantic_coverage(generation_mode: str | None, status: str) -> str | None:
@@ -92,7 +92,7 @@ def _semantic_coverage(generation_mode: str | None, status: str) -> str | None:
         return "complete" if status == "generated" else "partial"
     if generation_mode == "certified_projection":
         return "finite_entry_complete" if status == "generated" else "finite_entry_partial"
-    if generation_mode in {"scoped", "raw_evidence"}:
+    if generation_mode in {"scoped", "raw_evidence", "guided_partial"}:
         return "partial"
     return None
 

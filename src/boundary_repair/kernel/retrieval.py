@@ -170,10 +170,10 @@ def candidate_boundaries(task: TaskInput, index: ProgramIndex, snapshot: Reposit
             kind = EditKind.SPLIT_CONSUMER if family == 'consumer' else EditKind.REFINE_GUARD
             modes = [('parameters', names), ('constant', ())]
         for mode, reads in modes:
-            key = f'{span.path}:{start}:{end}:{mode}:{span.content_sha256}'
+            key = f'{span.path}:{start}:{end}:{span.node_kind}:{kind.value}:{mode}:{reads}:{span.content_sha256}'
             identifier = hashlib.sha256(key.encode()).hexdigest()[:16]
             features = tuple(Feature(name, symbol(name), (f'code:{span.path}:{span.start_line}',)) for name in reads)
             boundary = RepairBoundary(identifier, (span,), kind, features, ('return',) if span.node_kind == 'BooleanReturn' or span in local else (), score)
             specificity = 0 if span.node_kind == 'BooleanReturn' or span in local else 1 if span.node_kind != 'File' else 2
-            ranked.append((-score, specificity, span.path, start, mode, boundary))
+            ranked.append((-score, specificity, span.path, start, mode, identifier, boundary))
     return tuple(row[-1] for row in sorted(ranked, key=lambda x: x[:-1])[:maximum])

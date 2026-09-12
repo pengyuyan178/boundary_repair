@@ -102,17 +102,41 @@ def aligned_evidence(prompt):
 
 def write_fixture(root):
     from boundary_repair.adapters.program import ProgramAdapter
-    from boundary_repair.kernel.evidence import evidence_request_v4
+    from boundary_repair.kernel.evidence import evidence_request_v6
     from boundary_repair.kernel.retrieval import scope_snippets
     source = root / 'source'
     snap = RepositorySnapshot(source, 'a' * 40, tree_digest(source)) if source.exists() else snapshot(root)
     program = ProgramAdapter(config(root))
     ctx = context()
     code = scope_snippets(program.source_scope(snap, ctx, task().problem_statement))
-    request = evidence_request_v4(task(), code, 8000, program.observation_interfaces(snap, ctx))
+    request = evidence_request_v6(task(), code, 8000, program.observation_interfaces(snap, ctx), program.observation_scenarios(snap, ctx))
     path = root / 'responses.json'
-    path.write_text(json.dumps({'responses': {'evidence.v4': aligned_evidence(json.loads(request.prompt))}}), encoding='utf-8')
+    prompt = json.loads(request.prompt)
+    path.write_text(json.dumps({'responses': {'evidence.v6': catalogue_response(aligned_evidence(prompt), prompt)}}), encoding='utf-8')
     return path
+
+
+def catalogue_response(data, prompt):
+    """Encode an existing scripted fixture using frozen scenario IDs without adding evidence."""
+    from copy import deepcopy
+    result = deepcopy(data)
+    if 'scenario_catalog' not in prompt or not isinstance(result, dict) or 'requirement_groups' not in result:
+        return result
+    claims = result.get('observations', []) + [claim for group in result['requirement_groups']
+        for alternative in group['alternatives'] for claim in alternative['all_of']] + result.get('frames', [])
+    for claim in claims:
+        if 'binding_alternatives' in claim:
+            continue
+        cases = claim.pop('entry_cases', [])
+        associations = []
+        for case in cases:
+            inputs = {row['parameter']: row['value'] for row in case['inputs']}
+            scenario = next((s for s in prompt['scenario_catalog'] if s['interface_id'] == case['interface_id']
+                and json.dumps(s['inputs'], sort_keys=True) == json.dumps(inputs, sort_keys=True)), None)
+            associations.append({'scenario_id': scenario['scenario_id'] if scenario else 'invalid-scripted-context',
+                                 'expected': case['expected']})
+        claim['binding_alternatives'] = [{'cases': associations}] if associations else []
+    return result
 
 
 def snapshot(root):

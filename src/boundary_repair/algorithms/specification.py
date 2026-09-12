@@ -1,6 +1,7 @@
 """Open-world partial specification: quoted evidence -> alternatives -> model-relative MUST/MAY."""
 
 from dataclasses import dataclass, replace
+import json
 
 from boundary_repair.domain.errors import EvidenceConflict, ValidationError
 from boundary_repair.domain.runtime import RunContext
@@ -11,6 +12,7 @@ from boundary_repair.domain.specification import (
     Coverage,
     EntityBinding,
     EvidenceBundle,
+    EvidenceClaim,
     InterpretationSpace,
     ObservationInterface,
     SolverStatus,
@@ -18,10 +20,27 @@ from boundary_repair.domain.specification import (
     Witness,
 )
 from boundary_repair.domain.task import RepositorySnapshot, TaskInput
-from boundary_repair.kernel.evidence import evidence_request_v4, parse_evidence_v4
+from boundary_repair.kernel.evidence import evidence_request_v6, parse_evidence_v4, parse_evidence_v6
+from boundary_repair.kernel.codec import plain
 from boundary_repair.kernel.retrieval import lexical_score, scope_snippets
 from boundary_repair.kernel.terms import symbol
 from boundary_repair.ports import LogicPort, ModelPort, ProgramPort
+
+
+def claim_identity(claim: EvidenceClaim) -> str:
+    """Canonicalize identical source-bound propositions across alternative interpretations."""
+    def canonical(term: Term) -> list:
+        """Normalize commutative finite logical terms without interpreting free text."""
+        if term.op in {'and', 'or', 'eq', 'ne'}:
+            return [term.op, sorted((canonical(a) for a in term.args), key=repr)]
+        return [term.op, term.value, [canonical(a) for a in term.args]]
+    statement = (['uninterpreted', claim.description] if claim.statement.op == 'symbol'
+                 and str(claim.statement.value).startswith('uninterpreted:') else canonical(claim.statement))
+    cases = lambda entries: sorted((plain(case) for case in entries), key=lambda item: json.dumps(item, sort_keys=True))
+    description = claim.description if not claim.entry_cases else ''
+    return json.dumps([claim.kind.value, statement, description, plain(claim.targets), cases(claim.entry_cases),
+                       sorted((cases(option) for option in claim.binding_alternatives), key=repr)],
+                      ensure_ascii=False, sort_keys=True)
 
 
 class _EvidenceResponseValidationError(ValidationError):
@@ -91,19 +110,22 @@ class SpecificationRecovery:
         scope = self.program.source_scope(snapshot, context, query=task.problem_statement)
         code = scope_snippets(scope)
         interfaces = self.program.observation_interfaces(snapshot, context)
+        scenarios = self.program.observation_scenarios(snapshot, context)
         response = self.model.complete(
-            evidence_request_v4(task, code, self.response_tokens, interfaces), context
+            evidence_request_v6(task, code, self.response_tokens, interfaces, scenarios), context
         )
-        return self._parse_evidence_response(response.text, task, code, interfaces)
+        return self._parse_evidence_response(response.text, task, code, interfaces, scenarios)
 
     @staticmethod
     def _parse_evidence_response(
         text: str, task: TaskInput, code: tuple[dict[str, object], ...],
         interfaces: tuple[ObservationInterface, ...] = (),
+        scenarios: tuple | None = None,
     ) -> EvidenceBundle:
         """Translate only the untrusted response parser's validation failures."""
         try:
-            return parse_evidence_v4(text, task, code, interfaces)
+            return (parse_evidence_v4(text, task, code, interfaces) if scenarios is None
+                    else parse_evidence_v6(text, task, code, interfaces, scenarios))
         except ValidationError as error:
             raise _EvidenceResponseValidationError from error
 
@@ -137,6 +159,12 @@ class SpecificationRecovery:
                     entity, candidates, choices, Coverage.COMPLETE if complete else Coverage.PARTIAL
                 )
             )
+        for claim in evidence.claims:
+            if claim.binding_alternatives:
+                sites = tuple(dict.fromkeys(case.interface.site for option in claim.binding_alternatives for case in option))
+                choices = tuple(symbol(f'bind:{claim.claim_id}:{i}') for i in range(len(claim.binding_alternatives)))
+                coverage = Coverage.COMPLETE if all(claim.binding_alternatives) else Coverage.PARTIAL
+                bindings.append(EntityBinding('claim:' + claim.claim_id, sites, choices, coverage))
         return tuple(bindings)
 
     def build_interpretation_space(
@@ -183,12 +211,17 @@ class SpecificationRecovery:
                 for position, left in enumerate(selectors)
                 for right in selectors[position + 1 :]
             )
-            for selector, alternative in zip(selectors, group):
-                for claim_id in alternative:
-                    acceptance = symbol("accept:" + claim_id)
-                    choices.append(Term("implies", (selector, acceptance)))
-                    choices.append(Term("implies", (acceptance, selector)))
-        # Binding is kept independently: it does not invent an exhaustive semantic correspondence.
+            for claim_id in sorted({c for alternative in group for c in alternative}):
+                membership = Term('or', tuple(s for s, alternative in zip(selectors, group) if claim_id in alternative))
+                choices.append(Term('eq', (symbol('accept:' + claim_id), membership)))
+        for claim in evidence.claims:
+            if not claim.binding_alternatives:
+                continue
+            acceptance = symbol('accept:' + claim.claim_id)
+            selectors = tuple(symbol(f'bind:{claim.claim_id}:{i}') for i in range(len(claim.binding_alternatives)))
+            choices.append(Term('eq', (acceptance, Term('or', selectors))))
+            choices.extend(Term('not', (Term('and', (left, right)),))
+                           for i, left in enumerate(selectors) for right in selectors[i + 1:])
         result = self.logic.check(assumptions + tuple(choices), context)
         if result.status == SolverStatus.UNSAT:
             raise EvidenceConflict("inconsistent_acceptance_theory")
@@ -217,24 +250,43 @@ class SpecificationRecovery:
         must, may, frames, witnesses = [], [], [], []
         diagnostics = ["MUST_is_relative_to_normalized_acceptance_theory_not_a_perception_proof",
                        'entry_cases_are_evidence_interpretations_not_verified_UI_grounding']
-        for claim in evidence.claims:
+        normalized = {}
+        for item in evidence.claims:
+            normalized.setdefault(claim_identity(item), []).append(item)
+        for equivalent in normalized.values():
+            claim = equivalent[0]
             if claim.kind == ClaimKind.OBSERVATION:
                 continue
-            acceptance = symbol("accept:" + claim.claim_id)
+            acceptance = Term('or', tuple(symbol('accept:' + item.claim_id) for item in equivalent))
             negated = self.logic.check(
                 space.assumptions + space.choices + (Term("not", (acceptance,)),),
                 context,
             )
             positive = self.logic.check(space.assumptions + space.choices + (acceptance,), context)
+            bound = list(claim.entry_cases)
+            for option in claim.binding_alternatives:
+                for case in option:
+                    if case in bound:
+                        continue
+                    membership = []
+                    for item in equivalent:
+                        membership.extend(symbol(f'bind:{item.claim_id}:{i}')
+                                          for i, alternative in enumerate(item.binding_alternatives) if case in alternative)
+                    absent = self.logic.check(space.assumptions + space.choices +
+                        (Term('not', (Term('or', tuple(membership)),)),), context)
+                    if space.coverage == Coverage.COMPLETE and absent.status == SolverStatus.UNSAT:
+                        bound.append(case)
+            sources = tuple(dict.fromkeys(s for item in equivalent for s in item.source_ids))
             constraint = BehaviorConstraint(
                 claim.claim_id,
                 claim.kind,
                 claim.targets,
                 claim.statement,
-                claim.source_ids,
+                sources,
                 description=claim.description,
-                entry_cases=claim.entry_cases,
-                binding_status='program_bound' if claim.entry_cases else 'unbound',
+                entry_cases=tuple(bound),
+                binding_status='program_bound' if bound else 'ambiguous' if claim.binding_alternatives else 'unbound',
+                binding_alternatives=claim.binding_alternatives,
             )
             certain = (
                 space.consistency == SolverStatus.SAT
@@ -243,9 +295,9 @@ class SpecificationRecovery:
             )
             if certain:
                 (frames if claim.kind == ClaimKind.FRAME else must).append(constraint)
-                if not claim.entry_cases:
+                if not bound:
                     diagnostics.append('unbound_hard_constraint:' + claim.claim_id)
-                for number, case in enumerate(claim.entry_cases):
+                for number, case in enumerate(bound):
                     target = case.target
                     witnesses.append(
                         Witness(
@@ -253,7 +305,7 @@ class SpecificationRecovery:
                             (target,),
                             (target.context,),
                             SolverStatus.UNKNOWN,
-                            claim.source_ids,
+                            sources,
                             case.interface,
                             (case.expected,),
                         )
@@ -275,4 +327,5 @@ class SpecificationRecovery:
             diagnostics=tuple(diagnostics),
             interpretation_groups=evidence.interpretation_groups,
             sources=evidence.sources,
+            bindings=bindings,
         )

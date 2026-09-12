@@ -4,7 +4,7 @@
 
 ## 当前在线编辑接口（2026-09-11）
 
-当前事务编辑使用 `edits.v5`；证据协议沿用现有配置。下文原函数索引保留为历史记录。
+当前事务编辑使用 `edits.v5`；证据使用 `evidence.v6` 的程序情境关联协议，见文末补充及 `MECHANISM_ACTIVATION.md`。下文原函数索引保留为历史记录。
 
 ```python
 ProgramAdapter.source_scope(snapshot, context, query='') -> EditScope
@@ -1458,3 +1458,6 @@ TracePort.save(self, name: str, artifact: StageArtifact) -> None
 以固定文件名持久化类型化中间产物；路径限制由存储适配器负责。
 
 状态：interface_declaration；语句执行：0/0。
+# 三层机制协议补充
+
+当前生成证据使用 `evidence.v6`，普通事务仍为 `edits.v5`。新增程序情境目录、绑定备选、部分义务编译检查，以及不清空其他模块输入的消融交接，见 [MECHANISM_ACTIVATION.md](MECHANISM_ACTIVATION.md)。历史证据读取继续使用对应旧解析入口。

@@ -9,14 +9,14 @@ from tempfile import TemporaryDirectory
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from helpers import aligned_evidence, config, context, parser_module, snapshot, task, SOURCE
+from helpers import aligned_evidence, catalogue_response, config, context, parser_module, snapshot, task, SOURCE
 from boundary_repair.adapters.logic import LogicAdapter
 from boundary_repair.adapters.program import ProgramAdapter
 from boundary_repair.algorithms.expressivity import ExpressivityLocalization
 from boundary_repair.algorithms.specification import SpecificationRecovery
 from boundary_repair.algorithms.synthesis import ScopeSynthesis
 from boundary_repair.domain.errors import ValidationError
-from boundary_repair.domain.repair import ExpressivityVerdict, HoleFilling
+from boundary_repair.domain.repair import ExpressivityVerdict, HoleFilling, EditTransaction, SourceEdit
 from boundary_repair.domain.specification import SolverStatus
 from boundary_repair.kernel.evidence import evidence_request_v4, parse_evidence_v4, parse_evidence_v3
 from boundary_repair.kernel.files import tree_digest
@@ -39,7 +39,7 @@ class EntryModel:
 
     def complete(self, request, ctx):
         self.requests.append(request)
-        if request.schema_name != 'evidence.v4':
+        if request.schema_name != 'evidence.v6':
             raise AssertionError('unexpected second model request')
         ctx.budget.begin_model_call(request.max_output_tokens)
         prompt = json.loads(request.prompt)
@@ -52,7 +52,7 @@ class EntryModel:
             self.transform(data, prompt)
         self.response = data
         ctx.budget.record_output_tokens(1)
-        return ModelResponse(json.dumps(data), 1, 'synthetic-entry-evidence')
+        return ModelResponse(json.dumps(catalogue_response(data, prompt)), 1, 'synthetic-entry-evidence')
 
 
 @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
@@ -87,7 +87,7 @@ class EvidenceAlignmentTests(unittest.TestCase):
         self.assertEqual(contracts.extraction_status, 'complete')
         self.assertEqual(len(contracts.witnesses), 4)
         self.assertEqual(len(model.requests), 1)
-        self.assertEqual(model.requests[0].schema_name, 'evidence.v4')
+        self.assertEqual(model.requests[0].schema_name, 'evidence.v6')
         for claim in contracts.must + contracts.frames:
             self.assertEqual(claim.targets[0].property_name, 'required_behavior')
             self.assertEqual(claim.targets[0].entity_id, 'reported_gate_behavior')
@@ -122,14 +122,16 @@ class EvidenceAlignmentTests(unittest.TestCase):
         self.assertEqual(self.locate(contracts).assessments[0].verdict, ExpressivityVerdict.FEASIBLE)
         self.assertTrue(all(c.relation.value.startswith('uninterpreted:') for c in contracts.must))
 
-    def test_unbound_hard_requirement_is_retained_and_blocks_certification(self):
+    def test_unbound_hard_requirement_is_retained_without_erasing_local_proof(self):
         def add(data, prompt):
             unsupported = deepcopy(claims(data)[0])
             unsupported.update(statement='Also keep the Canvas rendering unchanged.', entry_cases=[])
             data['requirement_groups'][0]['alternatives'][0]['all_of'].append(unsupported)
         contracts, _ = self.recover(add)
         self.assertEqual(len(contracts.must), 4)
-        result = self.assert_unknown(contracts)
+        result = self.locate(contracts)
+        self.assertTrue(any(a.verdict == ExpressivityVerdict.FEASIBLE for a in result.assessments))
+        self.assertTrue(any(not c.entry_cases for c in contracts.must))
         self.assertTrue(any(reason.startswith('unbound_hard_constraint:')
                             for reason in result.assessments[0].unresolved))
 
@@ -201,10 +203,10 @@ class EvidenceAlignmentTests(unittest.TestCase):
         result = ScopeSynthesis(model, self.program, self.logic).synthesize(
             task(), contracts, self.locate(contracts), self.snap, self.ctx)
         self.assertEqual(len(model.requests), 1)
-        self.assertEqual(result.plan.generation_mode, 'certified')
-        with self.assertRaisesRegex(ValidationError, 'generated_boolean_obligation_violated'):
-            self.program.materialize(task(), result.plan,
-                                     (HoleFilling(result.plan.holes[0].hole_id, 'true'),), self.snap, self.ctx)
+        self.assertEqual(result.plan.generation_mode, 'certified_projection')
+        with self.assertRaisesRegex(ValidationError, 'projection_transaction_differs_from_certificate'):
+            self.program.compile(task(), result.plan,
+                EditTransaction((SourceEdit('replace_region', result.plan.holes[0].hole_id, 'true'),)), self.snap, self.ctx)
         candidate = self.root / 'candidate'
         candidate.mkdir()
         (candidate / 'ui.js').write_bytes((self.snap.root / 'ui.js').read_bytes())
@@ -219,7 +221,9 @@ class EvidenceAlignmentTests(unittest.TestCase):
         import jsonschema
         contracts, model = self.recover()
         request = model.requests[0]
-        schema = request.output_schema
+        directory = self.program.observation_interfaces(self.snap, self.ctx)
+        code = scope_snippets(self.program.source_scope(self.snap, self.ctx))
+        schema = evidence_request_v4(task(), code, 8000, directory).output_schema
         jsonschema.Draft202012Validator.check_schema(schema)
         jsonschema.validate(model.response, schema)
         directory = self.program.observation_interfaces(self.snap, self.ctx)

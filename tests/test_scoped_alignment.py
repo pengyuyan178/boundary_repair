@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from helpers import config, context, parser_module, snapshot, task, SOURCE
+from helpers import catalogue_response, config, context, parser_module, snapshot, task, SOURCE
 from test_evidence_alignment import EntryModel
 from boundary_repair.adapters.logic import LogicAdapter
 from boundary_repair.adapters.program import ProgramAdapter
@@ -74,7 +74,7 @@ class FocusModel:
 class ThreeInputEvidence:
     """Script the eight truth-table rows explicitly stated in the synthetic three-input issue."""
     def complete(self, request, ctx):
-        if request.schema_name != 'evidence.v4':
+        if request.schema_name != 'evidence.v6':
             raise AssertionError('unexpected evidence retry')
         ctx.budget.begin_model_call(request.max_output_tokens)
         ctx.budget.record_output_tokens(1)
@@ -88,7 +88,7 @@ class ThreeInputEvidence:
                                   'inputs': [{'parameter': name, 'value': value} for name, value in zip(('a', 'b', 'c'), row)],
                                   'expected': all(row)} for row in product((False, True), repeat=3)]}
         data = {'observations': [], 'requirement_groups': [{'alternatives': [{'all_of': [claim]}]}], 'frames': []}
-        return ModelResponse(json.dumps(data), 1, 'synthetic-three-input-evidence')
+        return ModelResponse(json.dumps(catalogue_response(data, prompt)), 1, 'synthetic-three-input-evidence')
 
 
 @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
@@ -162,7 +162,7 @@ class ScopedAlignmentTests(unittest.TestCase):
         self.assertEqual(left.plan.edit_scope.files, right.plan.edit_scope.files)
         self.assertEqual((self.snap.root / 'ui.js').read_bytes(), SOURCE.encode('utf-8'))
 
-    def test_feasible_three_input_interface_guides_one_model_generation(self):
+    def test_feasible_three_input_interface_compiles_a_checked_construction(self):
         source = 'function gate(a, b, c) { return a || b || c; }\nmodule.exports = {gate};\n'
         (self.snap.root / 'ui.js').write_text(source, encoding='utf-8')
         self.snap = replace(self.snap, tree_sha256=tree_digest(self.snap.root))
@@ -171,13 +171,11 @@ class ScopedAlignmentTests(unittest.TestCase):
         located = ExpressivityLocalization(self.program, self.logic).locate(self.task, contracts, self.snap, self.ctx)
         feasible = next(a for a in located.assessments if a.verdict == ExpressivityVerdict.FEASIBLE)
         self.assertEqual({f.feature_id for f in feasible.required_features}, {'a', 'b', 'c'})
-        with patch('boundary_repair.algorithms.synthesis.synthesize_boolean', side_effect=AssertionError('not finite generation')):
-            result, request = self.generate(located, contracts=contracts)
+        model = FocusModel()
+        result = ScopeSynthesis(model, self.program, self.logic).synthesize(self.task, contracts, located, self.snap, self.ctx)
         self.assertEqual(result.plan.boundary_ids, (feasible.boundary.boundary_id,))
-        guidance = json.loads(request.prompt)['repair_guidance']
-        self.assertEqual(guidance['selection_status'], 'focus_selected')
-        self.assertEqual({f['feature_id'] for f in guidance['decision_interfaces'][0]['sufficient_read_features']}, {'a', 'b', 'c'})
-        self.assertIn('not a uniquely necessary set', request.system)
+        self.assertFalse(model.requests)
+        self.assertEqual(result.plan.generation_mode, 'certified_projection')
         self.assertTrue(result.plan.obligations[0].entry_cases)
         self.apply_and_execute(result, 'gate', 3, [False] * 7 + [True])
 
@@ -243,15 +241,15 @@ class ScopedAlignmentTests(unittest.TestCase):
             self.assertIsNone(row['limited_interface_certificate'])
             self.assertIsNone(row['sufficient_read_features'])
 
-    def test_plain_control_remains_independent_of_second_layer_conclusions(self):
+    def test_plain_generation_consumes_localization_without_scope_optimization(self):
         negative = self.assessment(ExpressivityVerdict.INEXPRESSIBLE)
         left, lr = self.generate(LocalizationResult((negative,)), plain=True)
         right, rr = self.generate(LocalizationResult(()), plain=True)
-        self.assertEqual(lr, rr)
-        self.assertEqual(left.plan, right.plan)
-        self.assertIsNone(left.plan.boundary_guidance)
-        self.assertNotIn('repair_guidance', json.loads(lr.prompt))
-        self.assertEqual(lr.system, EDIT_SYSTEM)
+        self.assertNotEqual(lr.prompt, rr.prompt)
+        self.assertIsNotNone(left.plan.boundary_guidance)
+        self.assertIn('repair_guidance', json.loads(lr.prompt))
+        self.assertIsNone(left.plan.semantic_cost)
+        self.assertFalse(left.plan.scope_comparison)
 
     def test_every_hard_and_soft_obligation_survives_guided_planning(self):
         extra = replace(self.contracts.must[0], constraint_id='unsupported-hard', entry_cases=())
@@ -259,7 +257,7 @@ class ScopedAlignmentTests(unittest.TestCase):
         contracts = replace(self.contracts, must=self.contracts.must + (extra,), may=(may,))
         localized = ExpressivityLocalization(self.program, self.logic).locate(self.task, contracts, self.snap, self.ctx)
         plan = scoped_localization_plan(contracts, self.scope, localized, self.snap, context())
-        self.assertTrue(all(g.assessment.verdict == ExpressivityVerdict.UNKNOWN for g in plan.boundary_guidance))
+        self.assertTrue(any(g.assessment.verdict == ExpressivityVerdict.FEASIBLE for g in plan.boundary_guidance))
         self.assertEqual(plan.obligations, contracts.must + contracts.frames)
         self.assertEqual(plan.soft_obligations, contracts.may)
         self.assertEqual(plan.evidence_sources, contracts.sources)

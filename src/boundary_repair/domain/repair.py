@@ -81,6 +81,10 @@ class InterfaceCertificate:
     snapshot_sha256: tuple[str, ...]
     summary_keys: tuple[str, ...]
     max_grammar_nodes: int = 9
+    boundary_id: str = ''
+    readable_features: tuple[str, ...] = ()
+    proof_scope: str = 'declared_entry_obligation_subset'
+    specification_policy: str = 'open_world'
 
 
 class ExpressivityVerdict(StrEnum):
@@ -176,6 +180,7 @@ class PlanSemantics:
     baseline_mismatches: tuple[str, ...] = ()
     effects: tuple[Effect, ...] = ()
     ast_nodes: int = 0
+    invented_constants: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +222,7 @@ class PatchPlan:
     semantic_cost: SemanticScopeCost | None = None
     fixed_fillings: tuple['HoleFilling', ...] = ()
     semantic_check: PlanSemantics | None = None
+    enforced_obligations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

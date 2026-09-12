@@ -5,15 +5,16 @@ import difflib
 import hashlib
 import json
 import re
+from itertools import product
 from typing import Any
 
 from boundary_repair.adapters.frontend import analyze_sources, parse_sources
-from boundary_repair.adapters.repository import SourceRepository, PatchCompiler, bind_edit_blocks
+from boundary_repair.adapters.repository import SourceRepository, PatchCompiler, bind_edit_blocks, transaction_contents
 from boundary_repair.config import ExperimentConfig
 from boundary_repair.domain.errors import NoAdmissiblePatch, ValidationError
 from boundary_repair.domain.repair import EditScope, EditTransaction, Effect, HoleFilling, LocalRepairModel, PatchArtifact, PatchPlan, PlanSemantics, ProofAssumptions, RepairBoundary, SourceEdit
 from boundary_repair.domain.runtime import RunContext
-from boundary_repair.domain.specification import ClaimKind, Coverage, ObservationInterface, ObservationKey, SolverStatus, Term, Witness
+from boundary_repair.domain.specification import ClaimKind, Coverage, ObservationInterface, ObservationKey, ObservationScenario, SolverStatus, Term, Witness
 from boundary_repair.domain.task import ProgramIndex, RepositorySnapshot, SourceSpan, TaskInput
 from boundary_repair.kernel.files import allowed_source, source_slice, tree_digest
 from boundary_repair.kernel.terms import evaluate, literal, literal_assignments, symbol, term_from_json, typed_key, walk, symbols
@@ -54,6 +55,8 @@ class ProgramAdapter:
     def compile(self, task: TaskInput, plan: PatchPlan, transaction: EditTransaction,
                 snapshot: RepositorySnapshot, context: RunContext) -> PatchArtifact:
         """Enforce fixed constructions before shared exact-base transaction validation."""
+        from boundary_repair.adapters.storage import safe_component, write_json
+        checked = None
         if plan.generation_mode == 'certified_projection':
             expected = EditTransaction(tuple(SourceEdit('replace_region', f.hole_id, f.source_text)
                                              for f in plan.fixed_fillings))
@@ -63,7 +66,23 @@ class ProgramAdapter:
             if (checked != plan.semantic_check or checked.unresolved or checked.violated
                     or not checked.baseline_mismatches):
                 raise ValidationError('joint_projection_certificate_invalid')
-        return PatchCompiler(self.config).compile(task, plan, transaction, snapshot, context)
+        if plan.enforced_obligations:
+            originals, updated = transaction_contents(snapshot, plan.edit_scope, transaction,
+                                                       self.config.integration.max_file_bytes)
+            checked = self.assess_projection_plan(plan, snapshot, context, (originals, updated))
+            if not set(plan.enforced_obligations) <= set(checked.covered) or checked.violated:
+                destination = (self.config.results_root / safe_component(context.run_id) / 'cases'
+                    / safe_component(context.instance_id) / 'trajectory' / 'rejected_semantics.json')
+                write_json(destination, {'status': 'bound_property_rejected', 'check': checked,
+                                        'enforced_obligations': plan.enforced_obligations})
+                raise ValidationError('bound_property_transaction_not_verified')
+        patch = PatchCompiler(self.config).compile(task, plan, transaction, snapshot, context)
+        if checked is not None:
+            destination = (self.config.results_root / safe_component(context.run_id) / 'cases'
+                / safe_component(context.instance_id) / 'trajectory' / 'transaction_semantics.json')
+            write_json(destination, {'status': 'compiled', 'check': checked,
+                'enforced_obligations': plan.enforced_obligations, 'patch_sha256': patch.sha256})
+        return patch
 
     def index(self, snapshot: RepositorySnapshot, context: RunContext) -> ProgramIndex:
         """Analyze only retrieved UTF-8 files; text retrieval never waits for whole-repo parsing."""
@@ -120,6 +139,11 @@ class ProgramAdapter:
                     continue
                 key = hashlib.sha256(json.dumps(model, sort_keys=True).encode()).hexdigest()
                 for number, observation in enumerate(model['observations']):
+                    site = SourceSpan(**observation['site'])
+                    if observation['property_name'] == 'return' and any(i.kind == 'boolean_entry'
+                            and (i.site.path, i.site.start_byte, i.site.end_byte, i.site.content_sha256) == (
+                                site.path, site.start_byte, site.end_byte, site.content_sha256) for i in result):
+                        continue
                     identity = hashlib.sha256(f'{snapshot.tree_sha256}:{key}:{number}'.encode()).hexdigest()[:24]
                     result += (ObservationInterface('projection:' + identity, SourceSpan(**observation['site']),
                         tuple(item['name'] for item in model['inputs']), snapshot.tree_sha256, 'local_projection',
@@ -146,6 +170,53 @@ class ProgramAdapter:
                               ensure_ascii=False, sort_keys=True).encode('utf-8')
         interface_id = 'entry:' + hashlib.sha256(identity).hexdigest()[:24]
         return ObservationInterface(interface_id, site, parameters, snapshot.tree_sha256)
+
+    def observation_scenarios(self, snapshot: RepositorySnapshot,
+                              context: RunContext) -> tuple[ObservationScenario, ...]:
+        """Enumerate bounded source-derived entry valuations independently of desired outputs."""
+        directory = self.observation_interfaces(snapshot, context)
+        models = {hashlib.sha256(json.dumps(model, sort_keys=True).encode()).hexdigest(): model
+                  for row in self._data['files'] for model in row.get('local_models', ())}
+        result = []
+        for interface in directory:
+            context.budget.check_deadline()
+            terms, guards = [], ()
+            if interface.kind == 'local_projection':
+                key, number = interface.summary_key.rsplit(':', 1)
+                model = models[key]
+                observation = model['observations'][int(number)]
+                guards = tuple(program_term(term) for term in observation['conditions'])
+                terms = [program_term(raw) for item in model['observations']
+                         for raw in (item['expression'], *item['conditions'])]
+            sorts = dict(interface.input_sorts) or {name: 'boolean' for name in interface.parameters}
+            if any(program_sort(term, sorts) is None for term in terms):
+                continue
+            literals = tuple(program_evaluate(node, {}) for term in terms for node in walk(term) if node.op == 'literal')
+            domains = []
+            for name in interface.parameters:
+                sort = sorts[name]
+                values = (False, True) if sort == 'boolean' else tuple(
+                    value for value in literals if program_sort(literal(value), {}) == sort
+                    and not (sort == 'number' and abs(value) > 2 ** 53 - 1)
+                    and not (sort == 'string' and len(value) > 256))
+                domains.append(tuple(dict((typed_key(value), value) for value in values).values()))
+            if any(not domain for domain in domains):
+                continue
+            for number, values in enumerate(product(*domains)):
+                if number >= 256 or len(result) >= 2048:
+                    break
+                context.budget.check_deadline()
+                inputs = tuple(zip(interface.parameters, values))
+                environment = dict(inputs)
+                if any(isinstance(v, str) and not v.isascii() for v in values) and any(
+                        node.op == 'regex_test' for term in terms for node in walk(term)):
+                    continue
+                if not all(program_evaluate(guard, environment) for guard in guards):
+                    continue
+                identity = json.dumps((interface.interface_id, inputs), ensure_ascii=False, separators=(',', ':'))
+                result.append(ObservationScenario('scenario:' + hashlib.sha256(identity.encode()).hexdigest()[:24],
+                                                   interface, inputs, guards))
+        return tuple(result)
 
     def function_summary(self, site: SourceSpan, snapshot: RepositorySnapshot,
                          context: RunContext) -> dict[str, Any] | None:
@@ -205,7 +276,10 @@ class ProgramAdapter:
         certified = bool(actual) and complete
         return LocalRepairModel(boundary, tuple(actual), tuple(inputs), tuple(outputs), tuple(constraints),
                                  ProofAssumptions(True, True, certified, True),
-                                 Coverage.COMPLETE if certified else Coverage.PARTIAL)
+                                 Coverage.COMPLETE if certified else Coverage.PARTIAL,
+                                 covered_obligations=tuple(w.witness_id for w in actual),
+                                 grammar_atoms=(term_from_json(function['expression']),),
+                                 grammar_literals=(False, True), output_domain=(False, True))
 
     def projection_model(self, site: SourceSpan, snapshot: RepositorySnapshot,
                          context: RunContext) -> tuple[dict, dict, str] | None:
@@ -214,7 +288,9 @@ class ProgramAdapter:
         for file in self._data['files']:
             for model in file.get('local_models', []):
                 for edit in model['edits']:
-                    if SourceSpan(**edit['site']) == site:
+                    candidate = SourceSpan(**edit['site'])
+                    if (candidate.path, candidate.start_byte, candidate.end_byte, candidate.content_sha256) == (
+                            site.path, site.start_byte, site.end_byte, site.content_sha256):
                         key = hashlib.sha256(json.dumps(model, sort_keys=True).encode()).hexdigest()
                         return model, edit, key
         return None
@@ -315,25 +391,34 @@ class ProgramAdapter:
             literals, atoms, edit['output_sort'], tuple(domain))
 
     def assess_projection_plan(self, plan: PatchPlan, snapshot: RepositorySnapshot,
-                               context: RunContext) -> PlanSemantics:
+                               context: RunContext, contents: tuple | None = None) -> PlanSemantics:
         """Reparse joint pure constructions and check every sourced entry in the finite domain."""
         self.index(snapshot, context)
         fills = {f.hole_id: f.source_text for f in plan.fixed_fillings if f.operation == 'replace'}
-        if len(fills) != len(plan.fixed_fillings) or set(fills) != {h.hole_id for h in plan.holes}:
+        if contents is None and (len(fills) != len(plan.fixed_fillings) or set(fills) != {h.hole_id for h in plan.holes}):
             raise ValidationError('projection_fillings_must_match_holes')
         edits, originals = {}, {}
-        for hole in plan.holes:
+        for hole in plan.holes if contents is None else ():
             data, start, end = source_slice(snapshot.root, hole.site)
             if self.projection_model(hole.site, snapshot, context) is None:
                 raise ValidationError('unregistered_projection_edit')
             originals[hole.site.path] = data
             edits.setdefault(hole.site.path, []).append((start, end, fills[hole.hole_id].encode('utf-8')))
+        if contents is not None:
+            originals, changed = contents
+            for path, data in changed.items():
+                if data is None:
+                    return PlanSemantics(unresolved=tuple(plan.enforced_obligations) + ('removed_bound_source',))
+                before = originals.get(path, b'')
+                edits[path] = [(a, b, data[c:d]) for operation, a, b, c, d in
+                               difflib.SequenceMatcher(None, before, data, autojunk=False).get_opcodes()
+                               if operation != 'equal']
         sources = []
         for path, ranges in edits.items():
             ranges.sort()
             if any(a[1] > b[0] for a, b in zip(ranges, ranges[1:])):
                 raise ValidationError('overlapping_projection_edits')
-            data = originals[path]
+            data = originals.get(path, b'')
             for start, end, replacement in reversed(ranges):
                 data = data[:start] + replacement + data[end:]
             sources.append({'path': path, 'source': data.decode('utf-8')})
@@ -348,7 +433,7 @@ class ProgramAdapter:
             return (start + sum(len(text) - (b - a) for a, b, text in ranges if b <= start),
                     end + sum(len(text) - (b - a) for a, b, text in ranges if a < end))
 
-        def match_observer(path: str, observation: dict) -> tuple[dict, dict] | None:
+        def match_observer(path: str, observation: dict, original_model: dict) -> tuple[dict, dict] | None:
             """Match a projection by exact shifted source span and property, never by symbol alone."""
             if path not in updated:
                 return None
@@ -356,6 +441,7 @@ class ProgramAdapter:
             start, end = adjusted(path, site['start_byte'], site['end_byte'])
             return next(((model, item) for model in updated[path].get('local_models', ())
                          for item in model['observations'] if item['property_name'] == observation['property_name']
+                         and all(model.get(k) == original_model.get(k) for k in ('name', 'declaration_binding', 'header_sha256'))
                          and (item['site']['start_byte'], item['site']['end_byte']) == (start, end)), None)
 
         def project(model: dict, observation: dict, values: dict) -> tuple[bool, object]:
@@ -375,6 +461,20 @@ class ProgramAdapter:
         directory = {item.interface_id: item for item in self.observation_interfaces(snapshot, context)}
         models = {hashlib.sha256(json.dumps(model, sort_keys=True).encode()).hexdigest(): (row['path'], model)
                   for row in self._data['files'] for model in row.get('local_models', ())}
+        def projection_key(interface: ObservationInterface) -> tuple[str, int] | None:
+            """Resolve a declared observation to its source-identical scalar summary."""
+            if interface.kind == 'local_projection':
+                key, number = interface.summary_key.rsplit(':', 1)
+                return key, int(number)
+            if interface.kind == 'boolean_entry':
+                for key, (path, model) in models.items():
+                    for number, observation in enumerate(model['observations']):
+                        site = SourceSpan(**observation['site'])
+                        if observation['property_name'] == 'return' and (
+                                site.path, site.start_byte, site.end_byte, site.content_sha256) == (
+                                interface.site.path, interface.site.start_byte, interface.site.end_byte, interface.site.content_sha256):
+                            return key, number
+            return None
         covered, violated, unresolved, mismatches, effects = [], [], [], [], []
         bound_ids = set()
         for claim in plan.obligations:
@@ -385,15 +485,18 @@ class ProgramAdapter:
             for case in claim.entry_cases:
                 interface = case.interface
                 bound_ids.add(interface.interface_id)
-                if (interface.kind != 'local_projection' or directory.get(interface.interface_id) != interface
-                        or not claim.source_ids):
+                if directory.get(interface.interface_id) != interface or not claim.source_ids:
                     statuses.append('unknown')
                     continue
-                key, number = interface.summary_key.rsplit(':', 1)
+                reference = projection_key(interface)
+                if reference is None:
+                    statuses.append('unknown')
+                    continue
+                key, number = reference
                 path, model = models[key]
                 observation = model['observations'][int(number)]
                 valid, original = project(model, observation, dict(case.inputs))
-                found = match_observer(path, observation) if path in updated else (model, observation)
+                found = match_observer(path, observation, model) if path in updated else (model, observation)
                 if not valid or found is None:
                     statuses.append('unknown')
                     continue
@@ -416,12 +519,15 @@ class ProgramAdapter:
             if all(status == 'valid' for status in statuses):
                 covered.append(claim.constraint_id)
         for interface in directory.values():
-            if interface.kind != 'local_projection' or interface.site.path not in updated or interface.interface_id in bound_ids:
+            if interface.site.path not in updated or interface.interface_id in bound_ids:
                 continue
-            key, number = interface.summary_key.rsplit(':', 1)
+            reference = projection_key(interface)
+            if reference is None:
+                continue
+            key, number = reference
             path, model = models[key]
             before = model['observations'][int(number)]
-            found = match_observer(path, before)
+            found = match_observer(path, before, model)
             if found is None or any(before[k] != found[1][k] for k in ('expression', 'conditions')):
                 effects.append(Effect(ObservationKey(interface.interface_id, interface.property_name, literal(True)),
                                       symbol('effect:possible_extra_property'), Coverage.PARTIAL))
@@ -434,9 +540,16 @@ class ProgramAdapter:
                 unresolved.append('unmapped_construction_ast:' + hole.hole_id)
             else:
                 nodes += max(counts)
+        def constants(rows: list) -> set:
+            """Count scalar constants in the supported property expressions."""
+            return {typed_key(node.value) for row in rows for model in row.get('local_models', ())
+                    for observation in model['observations']
+                    for raw in (observation['expression'], *observation['conditions'])
+                    for node in walk(program_term(raw)) if node.op == 'literal' and type(node.value) is not bool}
+        invented = len(constants(parsed['files']) - constants(self._data['files']))
         return PlanSemantics(tuple(dict.fromkeys(covered)), tuple(dict.fromkeys(violated)),
                              tuple(dict.fromkeys(unresolved)), tuple(dict.fromkeys(mismatches)),
-                             tuple(dict.fromkeys(effects)), nodes)
+                             tuple(dict.fromkeys(effects)), nodes, invented)
 
     def effects(self, plan: PatchPlan, snapshot: RepositorySnapshot, context: RunContext) -> tuple[Effect, ...]:
         """A5: return a local property effect where justified, otherwise explicit unknown effects.

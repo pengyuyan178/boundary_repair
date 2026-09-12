@@ -118,6 +118,7 @@ def audit_batch(batch: Path) -> dict:
         contracts, localization, raw_plan = (artifact(name) for name in
                                             ('contracts.json', 'localization.json', 'generation_plan.json'))
         hard = contracts.get('must', []) + contracts.get('frames', [])
+        transaction_check = artifact('transaction_semantics.json')
         requests = [json.loads(path.read_text(encoding='utf-8')) for path in sorted((case / 'trajectory').glob('*.request.json'))]
         evidence = next((json.loads(r['prompt']) for r in requests if r['schema_name'].startswith('evidence.')), {})
         assessments = localization.get('assessments', [])
@@ -132,11 +133,15 @@ def audit_batch(batch: Path) -> dict:
             'extraction_status': contracts.get('extraction_status'), 'must': len(contracts.get('must', [])),
             'frames': len(contracts.get('frames', [])), 'bound_hard': sum(bool(c.get('entry_cases')) for c in hard),
             'entry_cases': sum(len(c.get('entry_cases', [])) for c in hard), 'witnesses': len(contracts.get('witnesses', [])),
+            'binding_candidates': len(contracts.get('bindings', [])),
+            'ambiguous_constraints': sum(c.get('binding_status') == 'ambiguous' for c in hard),
             'diagnostics': contracts.get('diagnostics', [])}, 'layer2': {
             'analyzed': len(assessments), 'verdicts': counts,
             'positive_certificates': sum(a['verdict'] == 'feasible' and bool(a.get('certificate')) for a in assessments),
             'negative_certificates': sum(a['verdict'] == 'inexpressible' and bool(a.get('certificate')) for a in assessments)},
             'layer3': {'candidates_compared': len(plan.scope_comparison) if plan else 0,
+                'enforced_obligations': list(plan.enforced_obligations) if plan else [],
+                'verified_final_properties': transaction_check.get('check', {}).get('covered', []),
                 'generation_mode': plan.generation_mode if plan else None,
                 'scope_narrowed': bool(read and scope and scope_identity(read) != scope_identity(scope)),
                 'read_catalog_bytes': sum(b - a for _, a, b in scope_ranges(read)) if read else None,

@@ -235,6 +235,7 @@ class ScaffoldTests(unittest.TestCase):
         program, model = Mock(), Mock()
         program.source_scope.return_value = EditScope((), (), ())
         program.observation_interfaces.return_value = ()
+        program.observation_scenarios.return_value = ()
         program.index.return_value = ProgramIndex((), ())
         model.complete.return_value.text = "not JSON"
         result = SpecificationRecovery(model, program, Mock()).recover(
