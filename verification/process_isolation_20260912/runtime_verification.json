@@ -1,0 +1,165 @@
+{
+  "not_benchmark_evidence": true,
+  "real_model_calls": 0,
+  "exports": {
+    "dev": {
+      "tasks": 100,
+      "task_sha256": "08a1b7f4873a07c30cc3508a48538dba639f823223e76c6018040860668098d6",
+      "evaluation_dataset_sha256": "bbc645dcf2557348c749f95f0bcbd2d3064409f2e089432d2d1f24f91a07c87b",
+      "exact_field_allowlist_passed": true
+    },
+    "test": {
+      "tasks": 480,
+      "task_sha256": "5d73b62089cff4821cc040e643583e847e045093a0f5e3cfbe17d488c6b9581c",
+      "evaluation_dataset_sha256": "03653423b955194e857012e3273e6aa57c05ddfd51429657b19b073b2aa4c0b0",
+      "exact_field_allowlist_passed": true
+    }
+  },
+  "probes": {
+    "probe": {
+      "isolation": {
+        "protocol": "isolated-generation-v1",
+        "image_id": "sha256:cca8ab072ceecfb28d3ebcbe207eec942deb1ca563225f1652b36184f26aa53d",
+        "user": "1000:1000",
+        "mounts": {
+          "/opt/method/src": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/method/src",
+            "writable": false
+          },
+          "/opt/method/run_layers.py": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/method/scripts/run_layers.py",
+            "writable": false
+          },
+          "/opt/typescript": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/method/node_modules/typescript",
+            "writable": false
+          },
+          "/input": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/probes/probe/input",
+            "writable": false
+          },
+          "/base": {
+            "source": "/tmp/boundary-docker-6xm0getw/source",
+            "writable": false
+          },
+          "/output": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/probes/probe/output",
+            "writable": true
+          }
+        },
+        "read_only_root": true,
+        "privileged": false,
+        "cap_drop": [
+          "ALL"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "none",
+        "raw_dataset_mounted": false,
+        "docker_socket_mounted": false,
+        "exit_code": 0,
+        "oom_killed": false
+      },
+      "result": {
+        "operation": "probe",
+        "not_benchmark_evidence": true,
+        "instance_id": "markedjs__marked-2627",
+        "source_sha256": "c8e426f0598e19a073642a1a4cb4341c104fde0b6e1f35471ea423f5ca1c46f6",
+        "real_model_calls": 0,
+        "file_open_denied": {
+          "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/dataset/dev/SWE-bench_Multimodal.json": true,
+          "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/dataset/test/SWE-bench_Multimodal.json": true,
+          "/proc/1/root/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/dataset/dev/SWE-bench_Multimodal.json": true,
+          "/var/run/docker.sock": true,
+          "/testbed/.git/HEAD": true
+        },
+        "base_is_read_only": true,
+        "uid": 1000,
+        "docker_socket_accessible": false,
+        "host_dataset_accessible": false,
+        "host_evaluation_accessible": false,
+        "benchmark_image_testbed_accessible": false
+      }
+    },
+    "census": {
+      "isolation": {
+        "protocol": "isolated-generation-v1",
+        "image_id": "sha256:cca8ab072ceecfb28d3ebcbe207eec942deb1ca563225f1652b36184f26aa53d",
+        "user": "1000:1000",
+        "mounts": {
+          "/opt/typescript": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/method/node_modules/typescript",
+            "writable": false
+          },
+          "/input": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/probes/census/input",
+            "writable": false
+          },
+          "/base": {
+            "source": "/tmp/boundary-docker-6xm0getw/source",
+            "writable": false
+          },
+          "/output": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/probes/census/output",
+            "writable": true
+          },
+          "/opt/method/src": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/method/src",
+            "writable": false
+          },
+          "/opt/method/run_layers.py": {
+            "source": "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/verification/process_isolation_20260912_resume/method/scripts/run_layers.py",
+            "writable": false
+          }
+        },
+        "read_only_root": true,
+        "privileged": false,
+        "cap_drop": [
+          "ALL"
+        ],
+        "security_opt": [
+          "no-new-privileges"
+        ],
+        "network": "none",
+        "raw_dataset_mounted": false,
+        "docker_socket_mounted": false,
+        "exit_code": 0,
+        "oom_killed": false
+      },
+      "result": {
+        "operation": "census",
+        "not_benchmark_evidence": true,
+        "instance_id": "markedjs__marked-2627",
+        "source_sha256": "c8e426f0598e19a073642a1a4cb4341c104fde0b6e1f35471ea423f5ca1c46f6",
+        "real_model_calls": 0,
+        "file_open_denied": {
+          "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/dataset/dev/SWE-bench_Multimodal.json": true,
+          "/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/dataset/test/SWE-bench_Multimodal.json": true,
+          "/proc/1/root/home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/dataset/dev/SWE-bench_Multimodal.json": true,
+          "/var/run/docker.sock": true,
+          "/testbed/.git/HEAD": true
+        },
+        "base_is_read_only": true,
+        "uid": 1000,
+        "docker_socket_accessible": false,
+        "host_dataset_accessible": false,
+        "host_evaluation_accessible": false,
+        "benchmark_image_testbed_accessible": false,
+        "interfaces": 0,
+        "boolean_entries": 0,
+        "local_projections": 0,
+        "local_edit_interfaces": 0
+      }
+    }
+  },
+  "archived_reports_checked": 47,
+  "incomplete_reports": 6,
+  "retained_passes": [
+    "Automattic__wp-calypso-33752",
+    "processing__p5.js-3680"
+  ],
+  "incomplete_repositories": {
+    "chartjs__Chart.js": 6
+  }
+}

@@ -1,4 +1,5 @@
 """生成实验编排；不导入评测器。顺序运行是明确的一期架构选择。"""
+import os
 import platform
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,6 +112,22 @@ def _failure_checks(component: str) -> tuple[str, str]:
     )
 
 
+def require_isolated_generation(config: ExperimentConfig) -> None:
+    """Require the isolated worker entry point for server-side patch generation."""
+    if config.target != "server":
+        return
+    if (os.environ.get("BOUNDARY_GENERATION_ROLE") != "isolated_worker"
+            or not Path("/.dockerenv").is_file()
+            or os.getuid() == 0
+            or config.project_root != Path("/work")
+            or config.dataset != Path("/input/tasks.json")
+            or config.results_root != Path("/output")
+            or config.harness_python is not None
+            or config.image_manifest is not None
+            or Path("/var/run/docker.sock").exists()):
+        raise ConfigurationError("server_generation_requires_isolated_worker")
+
+
 def run_generation(
     config: ExperimentConfig, tasks: tuple[TaskInput, ...], batch_id: str,
     pipeline: RepairPipeline, workspace: WorkspacePort,
@@ -121,6 +138,7 @@ def run_generation(
     剩余题标为未尝试，不记成 unresolved。普通运行异常用类型名记录，不回显凭证。
     不读取 .env；不评测、不回溯、不根据失败额外采样。调用方应先完成数据选择。
     """
+    require_isolated_generation(config)
     if not tasks:
         raise ValueError("No tasks selected")
     store = BatchStore.create(config.results_root, batch_id)

@@ -54,11 +54,30 @@ harness_revision 显式使用 `version:<确切版本>` 或 `git:<40位commit>`�
 cd /home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/code/boundary_repair
 python run.py doctor --config configs/server_docker.json
 python run.py inspect --config configs/chartjs_server.json --repo chartjs/Chart.js
-python run.py generate --config configs/chartjs_server.json --repo chartjs/Chart.js --limit 1 --batch chartjs-smoke-001
-python run.py evaluate --config configs/chartjs_server.json \
-  --batch-directory /home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/method/boundary_repair/chartjs-smoke-001 \
-  --evaluation-id chartjs-grade-001
 ```
+
+服务器生成必须使用 `scripts/run_layers.py` 的独立进程入口。`run.py generate` 的服务器模式直接拒绝执行。
+每个新批次的 `<launch>` 目录应包含已冻结的 `method_snapshot/`、`source_files.sha256.json`
+和 `runtime_template.json`；TypeScript 安装在快照的 `node_modules/typescript/`。
+沿用已验证的 GPT-4.1 配置和 seed 42，按完整 dev（100题）或 test（480题）选择输入。
+
+```bash
+python <launch>/method_snapshot/scripts/run_layers.py --mode prepare --split dev --launch <launch>
+python <launch>/method_snapshot/scripts/run_layers.py --mode generate --launch <launch>
+python <launch>/method_snapshot/scripts/run_layers.py --mode evaluate --launch <launch>
+```
+
+这三个命令必须分别启动。`prepare` 属于评测侧的数据导出步骤，可以读取原始答案；
+它只输出严格白名单的任务、issue 附件及镜像标识。生成调度器只读净化后的输入，
+每个实际执行算法的进程运行在独立非 root Docker 容器中；容器只挂载该题的输入、
+修复前生产源码、只读方法代码/解析器和自己的输出目录，不挂载原始数据、宿主项目、
+其他案例产物或 Docker socket。镜像由 `scripts/Dockerfile.generator` 构建，默认标签为
+`boundary-repair-generator:20260912`，每批记录实际镜像 ID。
+
+生成容器退出后才收集产物，全部生成结束后冻结预测、结果、批次清单和镜像清单。
+评测是另一次独立启动；它先校验冻结文件，再读取原始数据。它不会调用生成器，
+评分不能回流为下一次模型输入。准备端和评分端属于可信评测侧，宿主调度器仍有 Docker
+管理权限；文件访问隔离的对象是实际运行模型和算法的生成容器。
 
 这里的 python 指已经激活并验证的服务器解释器，不预设未知可执行路径。
 旧随机 10 题批次已联调真实 API/Docker/harness，结果为 0/10。v2 不能继承旧版的供应商兼容性结论；
@@ -81,7 +100,11 @@ require_witness 在可表达性路径要求见证；缺失时 UNKNOWN，普通�
 
 官方预测三字段为 instance_id/model_name_or_path/model_patch。
 run_id 包含 evaluation_id 和预测哈希，避免不同补丁复用旧缓存。
-读逐题 report.json 的真实布尔 resolved；selected/submitted/graded/infrastructure_errors 分开。
+逐题 report.json 的布尔 resolved 还须通过测试日志完整性检查：有开始/结束标记和唯一退出码；
+成功必须对应退出码0。Chart.js 还须 Chrome 与 Firefox 均执行完整测试且没有断连。
+完整执行但测试失败仍可记为未修复；日志缺失、浏览器中断或成功状态与退出码矛盾时，
+只记 infrastructure_errors，并保留原始报告及 execution_integrity.json。
+selected/submitted/graded/infrastructure_errors 分开。
 生成未成功的题目仍在 selected 分母，不从总解决率中删除。
 
 ## 8. 实际验证层级
