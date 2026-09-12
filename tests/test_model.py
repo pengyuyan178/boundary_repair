@@ -7,11 +7,11 @@ import sys
 from tempfile import TemporaryDirectory
 from threading import Thread
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from helpers import config, context
 from boundary_repair.adapters.model import FrozenModelAdapter, chat_endpoint, read_model_environment, _public_address
-from boundary_repair.domain.errors import ConfigurationError, ExternalServiceError, ValidationError
+from boundary_repair.domain.errors import BudgetExceeded, ConfigurationError, ExternalServiceError, ValidationError
 from boundary_repair.domain.task import IssueAsset
 from boundary_repair.kernel.codec import strict_json
 from boundary_repair.ports import ModelRequest
@@ -28,15 +28,20 @@ class ModelHTTPTests(unittest.TestCase):
                         'usage':{'completion_tokens':7}}
         self.http_status = 200
         self.calls = []
+        self.wire_bodies = []
+        self.replies = []
         owner = self
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                raw = self.rfile.read(int(self.headers['Content-Length']))
+                owner.wire_bodies.append(raw)
+                body = json.loads(raw)
                 owner.calls.append((self.path, body, self.headers.get('Authorization')))
-                self.send_response(owner.http_status)
+                status, payload = owner.replies.pop(0) if owner.replies else (owner.http_status, owner.payload)
+                self.send_response(status)
                 self.send_header('Content-Type','application/json')
                 self.end_headers()
-                self.wfile.write(json.dumps(owner.payload).encode())
+                self.wfile.write(json.dumps(payload).encode())
             def log_message(self, format, *args):
                 pass
         self.server = ThreadingHTTPServer(('127.0.0.1',0), Handler)
@@ -109,21 +114,100 @@ class ModelHTTPTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(ctx.budget.model_calls, 1)
 
-    def test_service_failure_records_bounded_redacted_cause_without_retry(self):
+    def test_service_failure_stops_after_three_retries_and_preserves_redacted_errors(self):
         self.http_status = 503
         self.payload = {'error': {'message': 'upstream unavailable local-dummy Bearer another-secret ' + 'x' * 20000}}
         ctx = context()
-        with self.assertRaisesRegex(ExternalServiceError, '503'):
-            FrozenModelAdapter(self.config).complete(self.request, ctx)
+        with patch('boundary_repair.adapters.model.time.sleep') as sleep:
+            with self.assertRaisesRegex(ExternalServiceError, '503'):
+                FrozenModelAdapter(self.config).complete(self.request, ctx)
+        self.assertEqual(sleep.call_args_list, [call(1), call(2), call(4)])
         trajectory = self.config.results_root / ctx.run_id / 'cases' / ctx.instance_id / 'trajectory'
-        record = json.loads(next(trajectory.glob('*.error.json')).read_text())
-        self.assertEqual(record['http_status'], 503)
-        self.assertTrue(record['response_truncated'])
-        self.assertLessEqual(len(record['response_excerpt']), 2048)
-        self.assertNotIn('local-dummy', json.dumps(record))
-        self.assertNotIn('another-secret', json.dumps(record))
-        self.assertIn('upstream unavailable', record['response_excerpt'])
+        errors = sorted(trajectory.glob('*.error.json'))
+        self.assertEqual(len(errors), 4)
+        for path in errors:
+            record = json.loads(path.read_text())
+            self.assertEqual(record['http_status'], 503)
+            self.assertTrue(record['response_truncated'])
+            self.assertLessEqual(len(record['response_excerpt']), 2048)
+            self.assertNotIn('local-dummy', json.dumps(record))
+            self.assertNotIn('another-secret', json.dumps(record))
+            self.assertIn('upstream unavailable', record['response_excerpt'])
+        self.assertEqual((len(self.calls), ctx.budget.model_calls), (4, 4))
+        self.assertEqual(len(set(self.wire_bodies)), 1)
+        self.assertEqual(ctx.budget.output_tokens, 0)
+
+    def test_503_retries_identical_multimodal_request_then_stops_on_success(self):
+        self.replies = [(503, {'error': {'code': 'prompt_audit_unavailable'}}), (200, self.payload)]
+        request = replace(self.request, assets=(IssueAsset('https://example.invalid/a.png', 'image-1'),))
+        ctx = context()
+        with patch('boundary_repair.adapters.model.time.sleep') as sleep, patch(
+                'boundary_repair.adapters.model.prepare_asset_view',
+                return_value=('data:image/png;base64,AA==', 'a' * 64)) as image:
+            result = FrozenModelAdapter(self.config).complete(request, ctx)
+        self.assertEqual(json.loads(result.text), {'ok': True})
+        self.assertEqual((len(self.calls), ctx.budget.model_calls, ctx.budget.output_tokens), (2, 2, 7))
+        self.assertEqual(len(set(self.wire_bodies)), 1)
+        self.assertEqual(self.calls[0], self.calls[1])
+        image.assert_called_once()
+        sleep.assert_called_once_with(1)
+        trajectory = self.config.results_root / ctx.run_id / 'cases' / ctx.instance_id / 'trajectory'
+        self.assertTrue((trajectory / '001_test.v1.error.json').is_file())
+        self.assertTrue((trajectory / '002_test.v1.response.json').is_file())
+        retry = json.loads((trajectory / '002_test.v1.request.json').read_text())
+        self.assertEqual(retry['http_attempt'], 2)
+        self.assertEqual(retry['retry_of'], '001_test.v1')
+        self.assertNotIn('local-dummy', ''.join(p.read_text() for p in trajectory.iterdir()))
+
+    def test_third_503_retry_can_succeed(self):
+        self.replies = [(503, {'error': {'code': 'prompt_audit_unavailable'}})] * 3 + [(200, self.payload)]
+        ctx = context()
+        with patch('boundary_repair.adapters.model.time.sleep') as sleep:
+            result = FrozenModelAdapter(self.config).complete(self.request, ctx)
+        self.assertEqual(json.loads(result.text), {'ok': True})
+        self.assertEqual((len(self.calls), ctx.budget.model_calls, ctx.budget.output_tokens), (4, 4, 7))
+        self.assertEqual(sleep.call_args_list, [call(1), call(2), call(4)])
+
+    def test_503_retry_stops_at_nonretryable_error(self):
+        self.replies = [(503, {'error': {'code': 'prompt_audit_unavailable'}}), (429, {'error': {'code': 'rate_limit'}})]
+        ctx = context()
+        with patch('boundary_repair.adapters.model.time.sleep') as sleep:
+            with self.assertRaisesRegex(ExternalServiceError, 'model_http_status:429'):
+                FrozenModelAdapter(self.config).complete(self.request, ctx)
+        self.assertEqual((len(self.calls), ctx.budget.model_calls), (2, 2))
+        sleep.assert_called_once_with(1)
+
+    def test_503_retry_respects_model_call_budget(self):
+        self.http_status = 503
+        ctx = context()
+        ctx.budget.limits = replace(ctx.budget.limits, max_model_calls=1)
+        with patch('boundary_repair.adapters.model.time.sleep'):
+            with self.assertRaisesRegex(BudgetExceeded, 'model_budget'):
+                FrozenModelAdapter(self.config).complete(self.request, ctx)
         self.assertEqual((len(self.calls), ctx.budget.model_calls), (1, 1))
+
+    def test_503_retry_respects_deadline_after_backoff(self):
+        self.http_status = 503
+        ctx = context()
+        ctx.budget.limits = replace(ctx.budget.limits, timeout_seconds=2)
+        def expire(delay):
+            ctx.budget.started_at -= 3
+        with patch('boundary_repair.adapters.model.time.sleep', side_effect=expire):
+            with self.assertRaisesRegex(BudgetExceeded, 'task_timeout'):
+                FrozenModelAdapter(self.config).complete(self.request, ctx)
+        self.assertEqual((len(self.calls), ctx.budget.model_calls), (1, 1))
+
+    def test_other_server_errors_are_not_retried(self):
+        for status in (500, 502, 504):
+            with self.subTest(status=status):
+                self.http_status = status
+                self.calls.clear()
+                ctx = context()
+                with patch('boundary_repair.adapters.model.time.sleep') as sleep:
+                    with self.assertRaisesRegex(ExternalServiceError, f'model_http_status:{status}'):
+                        FrozenModelAdapter(self.config).complete(self.request, ctx)
+                self.assertEqual((len(self.calls), ctx.budget.model_calls), (1, 1))
+                sleep.assert_not_called()
 
     def test_raw_content_is_saved_before_domain_json_validation(self):
         self.payload['choices'][0]['message']['content'] = '{invalid-json'

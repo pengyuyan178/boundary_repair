@@ -1,4 +1,4 @@
-"""Single-call HTTP provider and explicitly labeled fixture mode. No SDK retries or shell env loading."""
+"""HTTP provider with bounded 503 retries and explicit fixtures; no SDK retries or shell env loading."""
 from __future__ import annotations
 
 import base64
@@ -25,6 +25,8 @@ from boundary_repair.domain.runtime import RunContext
 from boundary_repair.domain.task import IssueAsset, TaskInput
 from boundary_repair.kernel.codec import strict_json
 from boundary_repair.ports import ModelRequest, ModelResponse
+
+MAX_HTTP_503_RETRIES = 3
 
 
 def read_model_environment(config: ExperimentConfig) -> dict[str, str]:
@@ -339,7 +341,7 @@ class FrozenModelAdapter:
     config: ExperimentConfig
 
     def complete(self, request: ModelRequest, context: RunContext) -> ModelResponse:
-        """Send one schema-constrained multimodal request and require accounted usage and normal stop.
+        """Send a schema-constrained request with bounded 503 retries and require accounted usage and normal stop.
 
         Structured output remains untrusted and is validated by each algorithm. Missing usage
         charges the entire reservation then fails. Fixture outputs are explicitly synthetic.
@@ -367,81 +369,93 @@ class FrozenModelAdapter:
             'max_completion_tokens': limit, 'temperature': context.policy.temperature,
             'response_format': selected_format, 'n': 1, 'stream': False, 'seed': context.seed}
         trajectory = case_directory(self.config, context) / 'trajectory'
-        call_name = f'{context.budget.model_calls:03d}_{safe_component(request.schema_name)}'
-        write_json(trajectory / (call_name + '.request.json'), {
-            'schema_name': request.schema_name, 'system': request.system, 'prompt': request.prompt,
-            'model': body['model'], 'seed': body['seed'], 'temperature': body['temperature'],
-            'max_completion_tokens': limit, 'response_format': body['response_format'],
-            'assets': [{'source_id': asset.source_id, 'uri': asset.uri, 'sha256': digest}
-                       for asset, digest in zip(request.assets, asset_hashes)],
-        })
-        connection_class = http.client.HTTPSConnection if scheme == 'https' else http.client.HTTPConnection
-        connection = connection_class(host, port=port, timeout=min(self.config.integration.http_timeout, context.budget.remaining_seconds()))
-        try:
-            connection.request('POST', path, body=json.dumps(body).encode(), headers={
-                'Authorization': 'Bearer ' + values[self.config.model.api_key_env], 'Content-Type': 'application/json'})
-            response = connection.getresponse()
-            if response.status != 200:
-                rejected_raw = response.read(16385)
-                excerpt = rejected_raw.decode('utf-8', errors='replace')
-                excerpt = excerpt.replace(values[self.config.model.api_key_env], '[redacted]')
-                excerpt = re.sub(r'(?i)bearer\s+[A-Za-z0-9._~+/=-]+|\bsk-[A-Za-z0-9_-]+', '[redacted]', excerpt)
-                write_json(trajectory / (call_name + '.error.json'), {
-                    'stage': 'model_http', 'http_status': response.status,
-                    'response_format': body['response_format']['type'],
-                    'response_excerpt': excerpt[:2048], 'response_truncated': len(rejected_raw) > 16384,
-                    'response_prefix_sha256': hashlib.sha256(rejected_raw).hexdigest()})
-                if response.status in {400, 422}:
-                    try:
-                        rejected = json.loads(rejected_raw)
-                    except (ValueError, UnicodeDecodeError):
-                        rejected = {}
-                    error = rejected.get('error', {}) if isinstance(rejected, dict) else {}
-                    error = error if isinstance(error, dict) else {}
-                    parameter = error.get('param')
-                    if error.get('code') == 'invalid_json_schema' or (
-                            isinstance(parameter, str) and parameter.split('.')[0] == 'response_format'):
-                        raise ConfigurationError(f'model_request_rejected:{response.status}:{body["response_format"]["type"]}')
-                if response.status in {401, 403, 404}:
-                    raise ConfigurationError(f'model_request_rejected:{response.status}:{body["response_format"]["type"]}')
-                raise ExternalServiceError(f'model_http_status:{response.status}')
-            raw = response.read(4000001)
-            if len(raw) > 4000000:
-                context.budget.record_output_tokens(limit)
-                raise ExternalServiceError('model_response_size_limit')
-            data = strict_json(raw.decode('utf-8'), maximum=4000000)
-            choices = data.get('choices')
-            write_json(trajectory / (call_name + '.response.json'), {
-                'request_id': data.get('id'), 'model': data.get('model'), 'usage': data.get('usage'),
-                'response_sha256': hashlib.sha256(raw).hexdigest(),
-                'choices': [{'finish_reason': choice.get('finish_reason'),
-                             'text': choice.get('message', {}).get('content')}
-                            for choice in choices if isinstance(choice, dict)]
-                           if isinstance(choices, list) else choices,
+        encoded_body = json.dumps(body).encode()
+        original_call = f'{context.budget.model_calls:03d}_{safe_component(request.schema_name)}'
+        attempt = 0
+        while True:
+            if attempt:
+                time.sleep(min(2 ** (attempt - 1), context.budget.remaining_seconds()))
+                context.budget.begin_model_call(limit)
+            call_name = f'{context.budget.model_calls:03d}_{safe_component(request.schema_name)}'
+            write_json(trajectory / (call_name + '.request.json'), {
+                'schema_name': request.schema_name, 'system': request.system, 'prompt': request.prompt,
+                'http_attempt': attempt + 1, 'retry_of': original_call if attempt else None,
+                'model': body['model'], 'seed': body['seed'], 'temperature': body['temperature'],
+                'max_completion_tokens': limit, 'response_format': body['response_format'],
+                'assets': [{'source_id': asset.source_id, 'uri': asset.uri, 'sha256': digest}
+                           for asset, digest in zip(request.assets, asset_hashes)],
             })
-            usage = data.get('usage', {}).get('completion_tokens') if isinstance(data.get('usage'), dict) else None
-            if type(usage) is not int or usage < 0:
-                context.budget.record_output_tokens(limit)
-                raise ExternalServiceError('provider_usage_missing')
-            context.budget.record_output_tokens(usage)
-            context.budget.check_deadline()
-            choices = data.get('choices')
-            if not isinstance(choices, list) or len(choices) != 1 or choices[0].get('finish_reason') != 'stop':
-                raise ExternalServiceError('model_response_not_complete')
-            text = choices[0].get('message', {}).get('content')
-            if not isinstance(text, str) or not text.strip():
-                raise ExternalServiceError('model_content_missing_or_refused')
-            request_id = str(data.get('id', 'unavailable'))
-            response_digest = hashlib.sha256(raw).hexdigest()
-            # Metadata only: no hidden reasoning or authorization values are persisted here.
-            return ModelResponse(text, usage, request_id + ':sha256:' + response_digest,
-                                 tuple(asset_hashes), values[self.config.model.name_env])
-        except (OSError, UnicodeDecodeError, http.client.HTTPException) as exc:
-            write_json(trajectory / (call_name + '.error.json'), {
-                'stage': 'model_transport', 'cause_type': type(exc).__name__, 'errno': getattr(exc, 'errno', None)})
-            raise ExternalServiceError('model_transport_failed') from exc
-        finally:
-            connection.close()
+            connection_class = http.client.HTTPSConnection if scheme == 'https' else http.client.HTTPConnection
+            connection = connection_class(host, port=port, timeout=min(self.config.integration.http_timeout, context.budget.remaining_seconds()))
+            try:
+                connection.request('POST', path, body=encoded_body, headers={
+                    'Authorization': 'Bearer ' + values[self.config.model.api_key_env], 'Content-Type': 'application/json'})
+                response = connection.getresponse()
+                if response.status != 200:
+                    rejected_raw = response.read(16385)
+                    excerpt = rejected_raw.decode('utf-8', errors='replace')
+                    excerpt = excerpt.replace(values[self.config.model.api_key_env], '[redacted]')
+                    excerpt = re.sub(r'(?i)bearer\s+[A-Za-z0-9._~+/=-]+|\bsk-[A-Za-z0-9_-]+', '[redacted]', excerpt)
+                    write_json(trajectory / (call_name + '.error.json'), {
+                        'stage': 'model_http', 'http_status': response.status,
+                        'response_format': body['response_format']['type'],
+                        'response_excerpt': excerpt[:2048], 'response_truncated': len(rejected_raw) > 16384,
+                        'response_prefix_sha256': hashlib.sha256(rejected_raw).hexdigest()})
+                    if response.status == 503 and attempt < MAX_HTTP_503_RETRIES:
+                        attempt += 1
+                        continue
+                    if response.status in {400, 422}:
+                        try:
+                            rejected = json.loads(rejected_raw)
+                        except (ValueError, UnicodeDecodeError):
+                            rejected = {}
+                        error = rejected.get('error', {}) if isinstance(rejected, dict) else {}
+                        error = error if isinstance(error, dict) else {}
+                        parameter = error.get('param')
+                        if error.get('code') == 'invalid_json_schema' or (
+                                isinstance(parameter, str) and parameter.split('.')[0] == 'response_format'):
+                            raise ConfigurationError(f'model_request_rejected:{response.status}:{body["response_format"]["type"]}')
+                    if response.status in {401, 403, 404}:
+                        raise ConfigurationError(f'model_request_rejected:{response.status}:{body["response_format"]["type"]}')
+                    raise ExternalServiceError(f'model_http_status:{response.status}')
+                raw = response.read(4000001)
+                if len(raw) > 4000000:
+                    context.budget.record_output_tokens(limit)
+                    raise ExternalServiceError('model_response_size_limit')
+                data = strict_json(raw.decode('utf-8'), maximum=4000000)
+                choices = data.get('choices')
+                write_json(trajectory / (call_name + '.response.json'), {
+                    'request_id': data.get('id'), 'model': data.get('model'), 'usage': data.get('usage'),
+                    'response_sha256': hashlib.sha256(raw).hexdigest(),
+                    'choices': [{'finish_reason': choice.get('finish_reason'),
+                                 'text': choice.get('message', {}).get('content')}
+                                for choice in choices if isinstance(choice, dict)]
+                               if isinstance(choices, list) else choices,
+                })
+                usage = data.get('usage', {}).get('completion_tokens') if isinstance(data.get('usage'), dict) else None
+                if type(usage) is not int or usage < 0:
+                    context.budget.record_output_tokens(limit)
+                    raise ExternalServiceError('provider_usage_missing')
+                context.budget.record_output_tokens(usage)
+                context.budget.check_deadline()
+                choices = data.get('choices')
+                if not isinstance(choices, list) or len(choices) != 1 or choices[0].get('finish_reason') != 'stop':
+                    raise ExternalServiceError('model_response_not_complete')
+                text = choices[0].get('message', {}).get('content')
+                if not isinstance(text, str) or not text.strip():
+                    raise ExternalServiceError('model_content_missing_or_refused')
+                request_id = str(data.get('id', 'unavailable'))
+                response_digest = hashlib.sha256(raw).hexdigest()
+                # Metadata only: no hidden reasoning or authorization values are persisted here.
+                return ModelResponse(text, usage, request_id + ':sha256:' + response_digest,
+                                     tuple(asset_hashes), values[self.config.model.name_env])
+            except (OSError, UnicodeDecodeError, http.client.HTTPException) as exc:
+                write_json(trajectory / (call_name + '.error.json'), {
+                    'stage': 'model_transport', 'cause_type': type(exc).__name__, 'errno': getattr(exc, 'errno', None)})
+                raise ExternalServiceError('model_transport_failed') from exc
+            finally:
+                connection.close()
+
 
     def _fixture(self, request: ModelRequest, context: RunContext) -> ModelResponse:
         """Read a schema-keyed recorded response solely for explicit offline integration tests."""
