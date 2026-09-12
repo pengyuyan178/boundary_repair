@@ -73,7 +73,7 @@ class GenerationV3Tests(unittest.TestCase):
                         {**good, 'operation': 'replace_block'}, {**good, 'destination': 'other.js'}):
                 with self.subTest(bad=bad):
                     self.assertFalse(validator.is_valid({'edits': [bad]}))
-            self.assertEqual(request.schema_name, 'edits.v4')
+            self.assertEqual(request.schema_name, 'edits.v5')
             self.assertEqual(model.complete.call_count, 1)
 
     def test_scope_schema_limits_complete_file_operations_and_creation_paths(self):

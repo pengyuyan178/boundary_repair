@@ -1,0 +1,337 @@
+{
+  "model_calls": 0,
+  "benchmark_runs": 0,
+  "cases": [
+    {
+      "instance_id": "markedjs__marked-1435",
+      "schema_name": "edits.v4",
+      "source_checkpoint": "9b68fb0264fd99d5cd99dd73458b682dd7126c13",
+      "edits": [
+        {
+          "target": "B023",
+          "path": "lib/marked.js",
+          "node_kind": "ExpressionStatement",
+          "symbol": "marked",
+          "old_source": "    e.message += '\\nPlease report this to https://github.com/markedjs/marked.';\n",
+          "new_text": "marked.InlineLexer = InlineLexer;\nmarked.inlineLexer = InlineLexer.output;\n\nmarked.Slugger = Slugger;\n\nmarked.parse = marked;\n\nif (typeof module !== 'undefined' && typeof exports === 'object') {\n  module.exports = marked;\n} else if (typeof define === 'function' && define.amd) {\n  define(function() { return marked; });\n} else {\n  root.marked = marked;\n}\n\n})(this || (typeof window !== 'undefined' ? window : global));\n",
+          "following_source": "    if ((opt || marked.defaults).silent) {\n      return '<p>An error occurred:</p><pre>'\n        + e",
+          "parents": [
+            {
+              "block_id": "B014",
+              "node_kind": "FunctionDeclaration",
+              "symbol": "marked",
+              "start_byte": 38510,
+              "end_byte": 40636
+            },
+            {
+              "block_id": "B020",
+              "node_kind": "TryStatement",
+              "symbol": "marked",
+              "start_byte": 40256,
+              "end_byte": 40634
+            }
+          ],
+          "old_sha256": "6f4c33d55474447cee7e831d55382bc0350dddfd8b8cabfef037d2bec17228c2",
+          "full_file_in_region": false
+        }
+      ],
+      "rejection": {
+        "status": "rejected",
+        "path": "lib/marked.js",
+        "original_sha256": "5d9df248cc4198018fc365142995b6040d1e51a1cb0f3ee7ac3d46532f828489",
+        "generated_sha256": "29e94d333e4b02780f2abb657d88883d55cd3954b18b120e7282f645a71f4ff5",
+        "diagnostics": [
+          {
+            "code": 1128,
+            "line": 1634,
+            "column": 2,
+            "message": "Declaration or statement expected."
+          },
+          {
+            "code": 1005,
+            "line": 1648,
+            "column": 1,
+            "message": "')' expected."
+          },
+          {
+            "code": 1128,
+            "line": 1705,
+            "column": 1,
+            "message": "Declaration or statement expected."
+          },
+          {
+            "code": 1128,
+            "line": 1705,
+            "column": 2,
+            "message": "Declaration or statement expected."
+          }
+        ],
+        "unsupported": [
+          "syntax:1128",
+          "syntax:1005",
+          "syntax:1128",
+          "syntax:1128"
+        ]
+      },
+      "plan_blocks": 25,
+      "block_source_displayed": false
+    },
+    {
+      "instance_id": "diegomura__react-pdf-433",
+      "schema_name": "edits.v4",
+      "source_checkpoint": "9b68fb0264fd99d5cd99dd73458b682dd7126c13",
+      "edits": [
+        {
+          "target": "B067",
+          "path": "src/mixins/borders.js",
+          "node_kind": "FirstStatement",
+          "symbol": "drawBorders",
+          "old_source": "    const {\n      borderTopLeftRadius = 0,\n      borderTopRightRadius = 0,\n      borderBottomRightRadius = 0,\n      borderBottomLeftRadius = 0,\n      borderTopColor = 'black',\n      borderRightColor = 'black',\n      borderBottomColor = 'black',\n      borderLeftColor = 'black',\n      borderTopStyle = 'solid',\n      borderRightStyle = 'solid',\n      borderBottomStyle = 'solid',\n      borderLeftStyle = 'solid',\n    } = this.getComputedStyles();\n",
+          "new_text": "  drawBorders() {\n    const { left, top, width, height } = this.getAbsoluteLayout();\n\n    const {\n      borderTopWidth = 0,\n      borderRightWidth = 0,\n      borderBottomWidth = 0,\n      borderLeftWidth = 0,\n    } = this;\n\n    const {\n      borderTopLeftRadius = 0,\n      borderTopRightRadius = 0,\n      borderBottomRightRadius = 0,\n      borderBottomLeftRadius = 0,\n      borderTopColor = 'black',\n      borderRightColor = 'black',\n      borderBottomColor = 'black',\n      borderLeftColor = 'black',\n      borderTopStyle = 'solid',\n      borderRightStyle = 'solid',\n      borderBottomStyle = 'solid',\n      borderLeftStyle = 'solid',\n    } = this.getComputedStyles();\n\n    this.root.instance.save();\n\n    // Special case: All four radii are equal and widths are equal = rounded (circle/ellipse)\n    const radii = [borderTopLeftRadius, borderTopRightRadius, borderBottomRightRadius, borderBottomLeftRadius];\n    const allRadiiEqual = radii.every(r => r === radii[0]);\n    const allWidthsEqual = borderTopWidth === borderRightWidth && borderTopWidth === borderBottomWidth && borderTopWidth === borderLeftWidth;\n    const isRounded = allRadiiEqual && allWidthsEqual && borderTopWidth > 0 && borderTopLeftRadius > 0 && width === height;\n    if (isRounded && borderTopWidth > 0) {\n      // Draw a circle border with native PDF roundedRect stroke\n      // Fill must be done in drawBackgroundColor\n      this.root.instance\n        .lineWidth(borderTopWidth)\n        .strokeColor(borderTopColor)\n        .roundedRect(left, top, width, height, borderTopLeftRadius)\n        .stroke();\n      this.root.instance.restore();\n      return;\n    }\n\n    // Fallback: legacy segmented path\n    // border top\n    this.drawHorizontalBorder(\n      [\n        left + (borderTopLeftRadius > 0 ? borderTopWidth / 2 : 0),\n        top + borderTopWidth / 2,\n      ],\n      [\n        left + width - (borderTopRightRadius > 0 ? borderTopWidth / 2 : 0),\n        top + borderTopWidth / 2,\n      ],\n      borderTopLeftRadius,\n      borderTopRightRadius,\n      borderTopWidth,\n      borderTopColor,\n      borderTopStyle,\n    );\n\n    // border right\n    this.drawVerticalBorder(\n      [\n        left + width - borderRightWidth / 2,\n        top + (borderTopRightRadius > 0 ? borderRightWidth / 2 : 0),\n      ],\n      [\n        left + width - borderRightWidth / 2,\n        top + height - (borderBottomRightRadius > 0 ? borderRightWidth / 2 : 0),\n      ],\n      -borderTopRightRadius,\n      -borderBottomRightRadius,\n      borderRightWidth,\n      borderRightColor,\n      borderRightStyle,\n    );\n\n    // border bottom\n    this.drawHorizontalBorder(\n      [\n        left +\n          width -\n          (borderBottomRightRadius > 0 ? borderBottomWidth / 2 : 0),\n        top + height - borderBottomWidth / 2,\n      ],\n      [\n        left + (borderBottomLeftRadius > 0 ? borderBottomWidth / 2 : 0),\n        top + height - borderBottomWidth / 2,\n      ],\n      -borderBottomRightRadius,\n      -borderBottomLeftRadius,\n      borderBottomWidth,\n      borderBottomColor,\n      borderBottomStyle,\n    );\n\n    // border left\n    this.drawVerticalBorder(\n      [\n        left + borderLeftWidth / 2,\n        top + height - (borderBottomLeftRadius > 0 ? borderLeftWidth / 2 : 0),\n      ],\n      [\n        left + borderLeftWidth / 2,\n        top + (borderTopLeftRadius > 0 ? borderLeftWidth / 2 : 0),\n      ],\n      borderBottomLeftRadius,\n      borderTopLeftRadius,\n      borderLeftWidth,\n      borderLeftColor,\n      borderLeftStyle,\n    );\n\n    this.root.instance.restore();\n  },\n",
+          "following_source": "\n    // Save current graphics stack\n    this.root.instance.save();\n\n    // border top\n    this.drawH",
+          "parents": [
+            {
+              "block_id": "B064",
+              "node_kind": "FirstStatement",
+              "symbol": "",
+              "start_byte": 0,
+              "end_byte": 3777
+            },
+            {
+              "block_id": "B065",
+              "node_kind": "MethodDeclaration",
+              "symbol": "drawBorders",
+              "start_byte": 18,
+              "end_byte": 2664
+            }
+          ],
+          "old_sha256": "bf28115acf56dc117cc8757989f94bfce87526e2d24f2038a12b570a9f289257",
+          "full_file_in_region": true
+        }
+      ],
+      "rejection": {
+        "status": "rejected",
+        "path": "src/mixins/borders.js",
+        "original_sha256": "4644f23f6021a4d4f9f5d5544e19b3ec8ce374a9f3bc475890ecebccc947dd6a",
+        "generated_sha256": "225f791c883e2d8fefc271971860fea4c2c446e4797181c12518868563522857",
+        "diagnostics": [
+          {
+            "code": 1005,
+            "line": 12,
+            "column": 17,
+            "message": "';' expected."
+          },
+          {
+            "code": 1128,
+            "line": 128,
+            "column": 4,
+            "message": "Declaration or statement expected."
+          }
+        ],
+        "unsupported": [
+          "syntax:1005",
+          "syntax:1128"
+        ]
+      },
+      "plan_blocks": 128,
+      "block_source_displayed": false
+    },
+    {
+      "instance_id": "chartjs__Chart.js-8710",
+      "schema_name": "edits.v4",
+      "source_checkpoint": "9b68fb0264fd99d5cd99dd73458b682dd7126c13",
+      "edits": [
+        {
+          "target": "B002",
+          "path": "src/core/core.ticks.js",
+          "node_kind": "MethodDeclaration",
+          "symbol": "numeric",
+          "old_source": "  numeric(tickValue, index, ticks) {\n    if (tickValue === 0) {\n      return '0'; // never show decimal places for 0\n    }\n\n    const locale = this.chart.options.locale;\n    let notation;\n    let delta = tickValue; // This is used when there are less than 2 ticks as the tick interval.\n\n    if (ticks.length > 1) {\n      // all ticks are small or there huge numbers; use scientific notation\n      const maxTick = Math.max(Math.abs(ticks[0].value), Math.abs(ticks[ticks.length - 1].value));\n      if (maxTick < 1e-4 || maxTick > 1e+15) {\n        notation = 'scientific';\n      }\n\n      delta = calculateDelta(tickValue, ticks);\n    }\n\n    const logDelta = log10(Math.abs(delta));\n    const numDecimal = Math.max(Math.min(-1 * Math.floor(logDelta), 20), 0); // toFixed has a max of 20 decimal places\n\n    const options = {notation, minimumFractionDigits: numDecimal, maximumFractionDigits: numDecimal};\n    Object.assign(options, this.options.ticks.format);\n\n    return formatNumber(tickValue, locale, options);\n  }",
+          "new_text": "  numeric(tickValue, index, ticks) {\n    if (tickValue === 0) {\n      return '0'; // never show decimal places for 0\n    }\n\n    // Fix: Ensure locale is defined, fallback to 'en-US'\n    let locale = this.chart && this.chart.options && this.chart.options.locale ? this.chart.options.locale : 'en-US';\n    let notation;\n    let delta = tickValue; // This is used when there are less than 2 ticks as the tick interval.\n\n    if (ticks.length > 1) {\n      // all ticks are small or there huge numbers; use scientific notation\n      const maxTick = Math.max(Math.abs(ticks[0].value), Math.abs(ticks[ticks.length - 1].value));\n      if (maxTick < 1e-4 || maxTick > 1e+15) {\n        notation = 'scientific';\n      }\n\n      delta = calculateDelta(tickValue, ticks);\n    }\n\n    const logDelta = log10(Math.abs(delta));\n    let numDecimal = Math.max(Math.min(-1 * Math.floor(logDelta), 20), 0); // toFixed has a max of 20 decimal places\n\n    // Clamp numDecimal to a safe range for Intl.NumberFormat\n    numDecimal = Math.max(Math.min(numDecimal, 20), 0);\n    const options = {notation, minimumFractionDigits: numDecimal, maximumFractionDigits: numDecimal};\n    Object.assign(options, this.options.ticks.format);\n\n    return formatNumber(tickValue, locale, options);\n  },\n",
+          "following_source": ",\n\n\n  /**\n   * Formatter for logarithmic ticks\n   * @method Chart.Ticks.formatters.logarithmic\n   * ",
+          "parents": [
+            {
+              "block_id": "B000",
+              "node_kind": "FirstStatement",
+              "symbol": "",
+              "start_byte": 257,
+              "end_byte": 2608
+            }
+          ],
+          "old_sha256": "e75b105d0205d0273c3fec1b87c3a0aec818c22194214a1ed3624c4667972b1e",
+          "full_file_in_region": true
+        }
+      ],
+      "rejection": {
+        "status": "rejected",
+        "path": "src/core/core.ticks.js",
+        "original_sha256": "8b05deef462c8495cbdc7d584c34dc3c02cc5dc4491533486122c045e0ad595a",
+        "generated_sha256": "630f34cf69691cc12013540a6fe199d85feb0f8c529ab615b09c134172bc2829",
+        "diagnostics": [
+          {
+            "code": 1136,
+            "line": 58,
+            "column": 1,
+            "message": "Property assignment expected."
+          },
+          {
+            "code": 1005,
+            "line": 69,
+            "column": 14,
+            "message": "',' expected."
+          },
+          {
+            "code": 1005,
+            "line": 69,
+            "column": 40,
+            "message": "'=>' expected."
+          },
+          {
+            "code": 1128,
+            "line": 80,
+            "column": 1,
+            "message": "Declaration or statement expected."
+          }
+        ],
+        "unsupported": [
+          "syntax:1136",
+          "syntax:1005",
+          "syntax:1005",
+          "syntax:1128"
+        ]
+      },
+      "plan_blocks": 128,
+      "block_source_displayed": false
+    },
+    {
+      "instance_id": "markedjs__marked-2483",
+      "schema_name": "edits.v4",
+      "source_checkpoint": "9b68fb0264fd99d5cd99dd73458b682dd7126c13",
+      "edits": [
+        {
+          "target": "B001",
+          "path": "src/defaults.js",
+          "node_kind": "ReturnStatement",
+          "symbol": "getDefaults",
+          "old_source": "  return {\n    baseUrl: null,\n    breaks: false,\n    extensions: null,\n    gfm: true,\n    headerIds: true,\n    headerPrefix: '',\n    highlight: null,\n    langPrefix: 'language-',\n    mangle: true,\n    pedantic: false,\n    renderer: null,\n    sanitize: false,\n    sanitizer: null,\n    silent: false,\n    smartLists: false,\n    smartypants: false,\n    tokenizer: null,\n    walkTokens: null,\n    xhtml: false\n  };\n",
+          "new_text": "  return {\n    baseUrl: null,\n    breaks: false,\n    extensions: null,\n    gfm: true,\n    headerIds: true,\n    headerPrefix: '',\n    highlight: null,\n    langPrefix: 'language-',\n    mangle: true,\n    pedantic: false,\n    renderer: null,\n    sanitize: false,\n    sanitizer: null,\n    silent: false,\n    smartLists: false,\n    smartypants: false,\n    tokenizer: null,\n    walkTokens: null,\n    xhtml: false,\n    // Added option to allow fences in lists (for CommonMark behavior)\n    fencesInsideList: true\n  };\n}\n",
+          "following_source": "}\n\nexport let defaults = getDefaults();\n\nexport function changeDefaults(newDefaults) {\n  defaults = ",
+          "parents": [
+            {
+              "block_id": "B000",
+              "node_kind": "FunctionDeclaration",
+              "symbol": "getDefaults",
+              "start_byte": 0,
+              "end_byte": 445
+            }
+          ],
+          "old_sha256": "abb9e526abfe37157d365eca2580bfcbc0faa4886802a522eb680bbc67f2c891",
+          "full_file_in_region": true
+        }
+      ],
+      "rejection": {
+        "status": "rejected",
+        "path": "src/defaults.js",
+        "original_sha256": "b0bcb111666c6e50d888efd9bef2e99ef7f37310371bb00b2dc7efb6aa4a4a84",
+        "generated_sha256": "11aab76046dff974f954fbf045a669f001b452e595f6933a0ff0b17e24cb7153",
+        "diagnostics": [
+          {
+            "code": 1128,
+            "line": 26,
+            "column": 1,
+            "message": "Declaration or statement expected."
+          }
+        ],
+        "unsupported": [
+          "syntax:1128"
+        ]
+      },
+      "plan_blocks": 128,
+      "block_source_displayed": false
+    },
+    {
+      "instance_id": "Automattic__wp-calypso-26286",
+      "schema_name": "edits.v4",
+      "source_checkpoint": "9b68fb0264fd99d5cd99dd73458b682dd7126c13",
+      "edits": [
+        {
+          "target": "B081",
+          "path": "client/blocks/app-banner/index.jsx",
+          "node_kind": "ExpressionStatement",
+          "symbol": "",
+          "old_source": "\t\t\tthis.appBannerNode = ReactDom.findDOMNode( appBanner );\n",
+          "new_text": "\tisVisible() {\n\t\tconst { dismissedUntil, currentSection, currentRoute } = this.props;\n\n\t\t// Exclude /stats/activity for app banner\n\t\tif (\n\t\t\tcurrentSection === STATS &&\n\t\t\ttypeof currentRoute === 'string' &&\n\t\t\tcurrentRoute.startsWith('/stats/activity')\n\t\t) {\n\t\t\treturn false;\n\t\t}\n\n\t\treturn this.isMobile() && ! isDismissed( dismissedUntil, currentSection );\n\t}\n",
+          "following_source": "\t\t\tthis.appBannerNode.addEventListener( 'mousedown', this.stopBubblingEvents, false );\n\t\t\tthis.appBa",
+          "parents": [
+            {
+              "block_id": "B080",
+              "node_kind": "ClassDeclaration",
+              "symbol": "AppBanner",
+              "start_byte": 1317,
+              "end_byte": 5227
+            }
+          ],
+          "old_sha256": "c5c65004260c9dd29e41bbbb5cabe8be014b9e974c5fe38fa4eecc279825c9db",
+          "full_file_in_region": true
+        }
+      ],
+      "rejection": {
+        "status": "rejected",
+        "path": "client/blocks/app-banner/index.jsx",
+        "original_sha256": "cc884f8bd546e767c57f33012d85de0d2b4b3c16cd7f920e7a5b1dda6182d6e1",
+        "generated_sha256": "290bfa9a8addc8345492ddbcda168a489f0b38c214f831b901d233e120cab3c0",
+        "diagnostics": [
+          {
+            "code": 1005,
+            "line": 80,
+            "column": 14,
+            "message": "';' expected."
+          }
+        ],
+        "unsupported": [
+          "syntax:1005"
+        ]
+      },
+      "plan_blocks": 125,
+      "block_source_displayed": false
+    },
+    {
+      "instance_id": "Automattic__wp-calypso-21648",
+      "schema_name": "edits.v4",
+      "source_checkpoint": "9b68fb0264fd99d5cd99dd73458b682dd7126c13",
+      "edits": [
+        {
+          "target": "B004",
+          "path": "client/my-sites/domains/domain-management/email/placeholder.jsx",
+          "node_kind": "FirstStatement",
+          "symbol": "",
+          "old_source": "const Placeholder = () => (\n\t<div className=\"google-apps-users-card is-placeholder\">\n\t\t<SectionHeader label={ 'G Suite Users' } />\n\t\t<CompactCard className=\"google-apps-users-card__user-list\">\n\t\t\t<ul className=\"google-apps-users-card__user-list-inner\">\n\t\t\t\t<GoogleAppsUserItem user={ { email: 'mail@example.com', domain: 'example.com' } } />\n\t\t\t</ul>\n\t\t</CompactCard>\n\t</div>\n);\n",
+          "new_text": "// Utility function to decode HTML entities\ndefault function decodeHtmlEntities(str) {\n\treturn str.replace(/&#([0-9]+);/g, (match, dec) => {\n\t\treturn String.fromCharCode(dec);\n\t});\n}\n\nconst Placeholder = () => {\n\t// Example containing undecoded apostrophe entity, update as needed for actual injected value\n\tconst siteTitle = \"Allendav&#039;s Store Test Site\";\n\tconst decodedSiteTitle = decodeHtmlEntities(siteTitle);\n\n\treturn (\n\t\t<div className=\"google-apps-users-card is-placeholder\">\n\t\t\t<SectionHeader label={ 'G Suite Users' } />\n\t\t\t<CompactCard className=\"google-apps-users-card__user-list\">\n\t\t\t\t<ul className=\"google-apps-users-card__user-list-inner\">\n\t\t\t\t\t{/* Pass decoded name instead of entity */}\n\t\t\t\t\t<GoogleAppsUserItem user={ { email: 'mail@example.com', domain: 'example.com', fromName: decodedSiteTitle } } />\n\t\t\t\t</ul>\n\t\t\t</CompactCard>\n\t\t</div>\n\t);\n}\n",
+          "following_source": "\nexport default Placeholder;\n",
+          "parents": [],
+          "old_sha256": "77dd47de64befd39d6b7262f3aacc43ce5570084b3b9b5ae604c44f5c304fa40",
+          "full_file_in_region": true
+        }
+      ],
+      "rejection": {
+        "status": "rejected",
+        "path": "client/my-sites/domains/domain-management/email/placeholder.jsx",
+        "original_sha256": "2614a9c861a3daf984ef028294bab7852ef87b13274ce84356476d37d8d6b319",
+        "generated_sha256": "06b043b0fe9a2fe47caef194bc2ac5d891121d35921b44c86046b47e20395c1a",
+        "diagnostics": [
+          {
+            "code": 1005,
+            "line": 17,
+            "column": 1,
+            "message": "'export' expected."
+          }
+        ],
+        "unsupported": [
+          "syntax:1005"
+        ]
+      },
+      "plan_blocks": 113,
+      "block_source_displayed": false
+    }
+  ]
+}

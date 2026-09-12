@@ -1,13 +1,13 @@
 # 逐函数实现说明与适用边界
 
-下文 A/S/L/G/C 是历史实现说明；**当前在线协议为 evidence.v3 + edits.v4**，不是下文保留的 v2 签名。当前接口设计见 [INTERFACE_V3_DESIGN.md](INTERFACE_V3_DESIGN.md)。
+下文 A/S/L/G/C 是历史实现说明；**当前事务编辑协议为 edits.v5**，证据协议沿用现有配置，不是下文保留的 v2 签名。当前接口设计见 [INTERFACE_V3_DESIGN.md](INTERFACE_V3_DESIGN.md)。
 
 ## 当前编辑边界实现（2026-09-11）
 
 - `frontend/parse.cjs` 复用 TypeScript 5.8.3 的 `getStart/end`，提取完整声明、方法、构造器、访问器和语句；最多 4096 个块，并计入元数据上限。语法可解析不等于语义可证明。
 - `ProgramAdapter.source_scope` 先检索，再只解析选中文件，并缓存结果供 `index` 使用。`bind_edit_blocks` 将 UTF-8 解析偏移转换到原文件编码，验证哈希，只冻结完整落在阅读窗口内的最多 128 个块；不扩大窗口。
 - `EditRegion` 只承载阅读窗口；`EditBlock` 承载原字节范围和哈希。目录可以包含嵌套块，但同一事务不能同时替换父子块。
-- `TransactionRenderer` 只调用一次 `edits.v4`。模型选择块 ID 或文本模式窗口内唯一匹配的原文；没有可填写的起止行号。源码只显示一份，块目录仅给阅读位置说明。
+- `TransactionRenderer` 只调用一次 `edits.v5`，首选授权块或文本模式窗口内的精确 SEARCH/REPLACE。没有可填写的起止行号；源码窗口保留一份，块目录补充首尾各至多160字符的精确片段、长度与哈希以说明分隔符归属。片段可能重叠，不拼接为完整块。
 - `transaction_contents` 针对同一原始 base 原子计算全部替换、插入和文件操作。原文匹配不模糊、不修正、不默认取第一个；未知 ID、重叠匹配、哈希变化均拒绝。
 - `PatchCompiler` 保留语法检查、Git diff、exact-base 应用及字节/模式核验。新增语法错误仅保存 `trajectory/rejected_syntax.json` 诊断，不产出 `final.patch`，不回传模型。
 - certified 有限布尔合成仍由程序使用内部 `replace_region`；旧行号操作只保留底层兼容，不在新模型 Schema 或响应解析器中开放。八种消融组合共享上述接口基础设施。

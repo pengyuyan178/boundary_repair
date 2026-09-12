@@ -4,7 +4,7 @@
 
 ## 当前在线编辑接口（2026-09-11）
 
-当前使用 `evidence.v3 + edits.v4`。下文原函数索引保留为历史记录。
+当前事务编辑使用 `edits.v5`；证据协议沿用现有配置。下文原函数索引保留为历史记录。
 
 ```python
 ProgramAdapter.source_scope(snapshot, context, query='') -> EditScope
@@ -19,7 +19,7 @@ PatchCompiler.compile(task, plan, transaction, snapshot, context) -> PatchArtifa
 
 `EditScope.blocks` 为 `EditBlock(block_id, region_id, start_byte, end_byte, sha256, node_kind, symbol)` 的不可变元组；字节区间左闭右开且绑定原文件编码。`EditRegion.edit_mode` 在生成前固定为 `syntax` 或 `text`。
 
-模型操作只接受 `operation / target / new_text / old_text / destination` 五字段。`replace_block / insert_before / insert_after` 使用块 ID；`replace_text` 仅使用文本模式窗口 ID 和唯一精确原文；完整文件操作仍受冻结权限限制。`SourceEdit.first_line/last_line` 是内部历史兼容字段，不是当前模型参数。完整契约与限制见 [INTERFACE_V3_DESIGN.md](INTERFACE_V3_DESIGN.md)。
+模型操作只接受 `operation / target / new_text / old_text / destination` 五字段。首选 `replace_text`：target 为已授权块 ID 或文本模式窗口 ID，old_text 须在该目标内唯一精确匹配。syntax 阅读窗口的 ID 不能授予全文替换权限。`replace_block / insert_before / insert_after` 保留兼容；完整文件操作仍受冻结权限限制。`SourceEdit.first_line/last_line` 是内部历史兼容字段，不是当前模型参数。完整契约与限制见 [INTERFACE_V3_DESIGN.md](INTERFACE_V3_DESIGN.md)。
 
 ## src/boundary_repair/adapters/dataset.py
 

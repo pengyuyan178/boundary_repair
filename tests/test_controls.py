@@ -28,7 +28,7 @@ class ModelDouble:
         ctx.budget.begin_model_call(request.max_output_tokens)
         if request.schema_name=='evidence.v4':
             data=aligned_evidence(json.loads(request.prompt))
-        elif request.schema_name=='edits.v4':
+        elif request.schema_name=='edits.v5':
             prompt=json.loads(request.prompt)
             block=next(b for b in prompt['blocks']
                        if 'active || hidden' in target_source(prompt, b['block_id']))

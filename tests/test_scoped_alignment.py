@@ -49,7 +49,7 @@ class FocusModel:
 
     def complete(self, request, ctx):
         self.requests.append(request)
-        if request.schema_name != 'edits.v4':
+        if request.schema_name != 'edits.v5':
             raise AssertionError('unexpected additional model call')
         ctx.budget.begin_model_call(request.max_output_tokens)
         ctx.budget.record_output_tokens(1)

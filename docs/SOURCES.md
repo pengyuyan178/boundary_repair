@@ -16,6 +16,12 @@
 npm 在线安装未成功验证；初次实现实际解析使用现有 TypeScript 5.8.3。
 接口文档核验不等于在用户提供的服务器上运行成功。
 
+## edits.v5 精确替换（2026-09-12）
+
+- 复用本项目 `transaction_contents` 已有的唯一原文精确匹配实现，将目标解析扩展到冻结的语法块；保留原编码、哈希和事务检查。
+- SEARCH/REPLACE 表达方式参照 [Aider 编辑格式](https://aider.chat/docs/more/edit-formats.html)。本项目使用结构化 JSON 和预授权目标 ID，不引入 Aider 的整文件权限或宽松匹配逻辑。
+- 属于通用编辑工程，研究方法与受控消融共用，不声明为论文算法创新。
+
 ## edits.v4 编辑边界（2026-09-11）
 
 直接复用现有 TypeScript 5.8.3 Compiler API 的 `createSourceFile`、`forEachChild`、`getStart/end` 和 `parseDiagnostics`。没有引入新解析依赖，也没有复制 Aider、SWE-agent 或 ast-grep 的修复实现。程序绑定语法范围和唯一原文匹配属于公共编辑基础设施，不作为三个研究模块之外的新算法创新。

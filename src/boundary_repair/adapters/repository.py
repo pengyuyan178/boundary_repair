@@ -345,20 +345,27 @@ def transaction_contents(snapshot: RepositorySnapshot, scope: EditScope, transac
             if edit.first_line is not None or edit.last_line is not None or edit.destination:
                 raise ValidationError('unexpected_edit_coordinates')
             if edit.operation == 'replace_text':
-                region = regions.get(edit.target)
-                if region is None:
-                    raise ValidationError('unknown_edit_region')
-                if region.edit_mode != 'text':
-                    raise ValidationError('text_edit_not_declared')
+                block = blocks.get(edit.target)
+                if block is not None:
+                    region = regions[block.region_id]
+                    start, end = block.start_byte, block.end_byte
+                else:
+                    region = regions.get(edit.target)
+                    if region is None:
+                        raise ValidationError('unknown_search_target')
+                    if region.edit_mode != 'text':
+                        raise ValidationError('text_edit_not_declared')
+                    start, end = region.start_byte, region.end_byte
                 file = files[region.file_id]
-                if not edit.old_text and region.source:
+                search_source = originals[file.path][start:end].decode(file.encoding)
+                if not edit.old_text and search_source:
                     raise ValidationError('empty_search_text')
-                offset = region.source.find(edit.old_text)
+                offset = search_source.find(edit.old_text)
                 if offset < 0:
                     raise ValidationError('search_text_not_found')
-                if edit.old_text and region.source.find(edit.old_text, offset + 1) >= 0:
+                if edit.old_text and search_source.find(edit.old_text, offset + 1) >= 0:
                     raise ValidationError('ambiguous_search_text')
-                start = region.start_byte + len(region.source[:offset].encode(file.encoding))
+                start += len(search_source[:offset].encode(file.encoding))
                 end = start + len(edit.old_text.encode(file.encoding))
             else:
                 block = blocks.get(edit.target)
@@ -374,7 +381,7 @@ def transaction_contents(snapshot: RepositorySnapshot, scope: EditScope, transac
             old = originals[file.path][start:end].decode(file.encoding)
             newline = '\r\n' if '\r\n' in region.source else '\n'
             text = edit.new_text.replace('\r\n', '\n').replace('\n', newline)
-            if text and old.endswith('\n') and not text.endswith('\n'):
+            if edit.operation != 'replace_text' and text and old.endswith('\n') and not text.endswith('\n'):
                 text += newline
             if omission_placeholder(text, old):
                 raise ValidationError('omission_placeholder')

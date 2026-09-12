@@ -348,7 +348,7 @@ class ScopeSelectionTests(unittest.TestCase):
         self.assertEqual(transaction.edits[0].operation, 'replace_text')
         self.assertEqual(self.program.compile(self.task, chosen, transaction, self.snap, self.ctx).application_check, 'passed')
         outside = next(r for r in self.scope.regions if r.path == 'large.js')
-        with self.assertRaisesRegex(ValidationError, 'unknown_edit_region'):
+        with self.assertRaisesRegex(ValidationError, 'unknown_search_target'):
             transaction_contents(self.snap, chosen.edit_scope, EditTransaction((
                 SourceEdit('replace_text', outside.region_id, 'new', old_text=outside.source),)))
 

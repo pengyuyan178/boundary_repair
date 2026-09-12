@@ -58,7 +58,7 @@ class V3ModelDouble:
     @property
     def edit_calls(self) -> int:
         """Count only the one-shot generation calls."""
-        return sum(request.schema_name == "edits.v4" for request in self.requests)
+        return sum(request.schema_name == "edits.v5" for request in self.requests)
 
     def complete(self, request, run_context) -> ModelResponse:
         """Provide deterministic v3 JSON and account for each synthetic model response."""
@@ -66,7 +66,7 @@ class V3ModelDouble:
         run_context.budget.begin_model_call(request.max_output_tokens)
         if request.schema_name == "evidence.v4":
             text = "not-json" if self.evidence == "invalid" else json.dumps(self._evidence(request))
-        elif request.schema_name == "edits.v4":
+        elif request.schema_name == "edits.v5":
             if self.before_edit is not None:
                 self.before_edit(request)
             text = json.dumps(self._transaction(request))
@@ -207,7 +207,7 @@ class PipelineV3Tests(unittest.TestCase):
         self.assertEqual(trace.artifacts["contracts.json"].extraction_status, "partial")
         self.assertEqual(model.edit_calls, 1)
         self.assertEqual(
-            [request.schema_name for request in model.requests], ["evidence.v4", "edits.v4"]
+            [request.schema_name for request in model.requests], ["evidence.v4", "edits.v5"]
         )
 
     def test_invalid_evidence_uses_raw_evidence_once(self) -> None:
@@ -218,7 +218,7 @@ class PipelineV3Tests(unittest.TestCase):
         self.assertEqual(result.plan.generation_mode, "raw_evidence")
         self.assertEqual(result.patch.application_check, "passed")
         self.assertEqual(
-            [request.schema_name for request in model.requests], ["evidence.v4", "edits.v4"]
+            [request.schema_name for request in model.requests], ["evidence.v4", "edits.v5"]
         )
         self.assertEqual(model.edit_calls, 1)
 

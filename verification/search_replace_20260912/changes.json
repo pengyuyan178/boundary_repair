@@ -1,0 +1,114 @@
+[
+  {
+    "path": "README.md",
+    "before_sha256": "81785411d573599f08ccbd15f92bad1c0fec3e1b279ca8fa8533070451443e6a",
+    "after_sha256": "fec1ed7883214331aa055f977cc420b51f9bef7f7a0b4e9718a9c80ac0cd5b43",
+    "before_text_sha256": "81785411d573599f08ccbd15f92bad1c0fec3e1b279ca8fa8533070451443e6a",
+    "after_text_sha256": "fec1ed7883214331aa055f977cc420b51f9bef7f7a0b4e9718a9c80ac0cd5b43"
+  },
+  {
+    "path": "docs/API_REFERENCE.md",
+    "before_sha256": "56a25872df02f57055acbf64a7d0203024c43df6fe011ab4db2b6ce075b74a0d",
+    "after_sha256": "97a329a262a623c3d9edf064f6ba55a56d76495869f2902d33dfd18e60a4c6a7",
+    "before_text_sha256": "56a25872df02f57055acbf64a7d0203024c43df6fe011ab4db2b6ce075b74a0d",
+    "after_text_sha256": "97a329a262a623c3d9edf064f6ba55a56d76495869f2902d33dfd18e60a4c6a7"
+  },
+  {
+    "path": "docs/IMPLEMENTATION.md",
+    "before_sha256": "c4d9e3eb69ce767862bc1b7f5bb673f3093730c925d7ece5cae9f85ff6b0a856",
+    "after_sha256": "62cfaa03341d1a854809cd5dcb29a352482db121acd72b5d5c90e370336d04dc",
+    "before_text_sha256": "c4d9e3eb69ce767862bc1b7f5bb673f3093730c925d7ece5cae9f85ff6b0a856",
+    "after_text_sha256": "62cfaa03341d1a854809cd5dcb29a352482db121acd72b5d5c90e370336d04dc"
+  },
+  {
+    "path": "docs/INTERFACE_V3_DESIGN.md",
+    "before_sha256": "61116151b6b75330ed1b2ed67d6189267bb5e4e7c0f9a6696199b3560064b682",
+    "after_sha256": "a6670112876946e7bc049e5b29e020061f03a1e52d2edb243c7fcf69511ffc94",
+    "before_text_sha256": "61116151b6b75330ed1b2ed67d6189267bb5e4e7c0f9a6696199b3560064b682",
+    "after_text_sha256": "a6670112876946e7bc049e5b29e020061f03a1e52d2edb243c7fcf69511ffc94"
+  },
+  {
+    "path": "docs/SOURCES.md",
+    "before_sha256": "82f0ca10429214047a1ae7d046cb391b0a3e592d485e9efd8897218f1a4b5391",
+    "after_sha256": "9710947285289a04273eb02d67d36b0d476fc99186191e5b952240665a6abbf0",
+    "before_text_sha256": "82f0ca10429214047a1ae7d046cb391b0a3e592d485e9efd8897218f1a4b5391",
+    "after_text_sha256": "9710947285289a04273eb02d67d36b0d476fc99186191e5b952240665a6abbf0"
+  },
+  {
+    "path": "tests/test_assets_v3.py",
+    "before_sha256": "b98ad710ccfb678afa4c9c395840187a838eff3174599b29c85e584f8b9cd97b",
+    "after_sha256": "935b2bef995c4caaf764cd8fc974266b5c3b116e8b55b22383e58477ddbb16f8",
+    "before_text_sha256": "040e14ad46bc9995981baf4358c4590769335d952e5728f0ad83996ad7a631bb",
+    "after_text_sha256": "908e80d535d05d46586eb83a612ced4062380cc86ec1d777eedb31628a7130c7"
+  },
+  {
+    "path": "tests/test_controls.py",
+    "before_sha256": "c93eb01128d0d12e0d37a854b90f79ca13c9536e2fe02acb5ea9593b135043f2",
+    "after_sha256": "4092d03fd4d03efe7be995323f287a0f5ece9be1ce7bbea1f25f010c639b940e",
+    "before_text_sha256": "c93eb01128d0d12e0d37a854b90f79ca13c9536e2fe02acb5ea9593b135043f2",
+    "after_text_sha256": "4092d03fd4d03efe7be995323f287a0f5ece9be1ce7bbea1f25f010c639b940e"
+  },
+  {
+    "path": "tests/test_edit_boundaries_v4.py",
+    "before_sha256": "d8606d502e77675c5023c46b38759f00c02a0dc45e53f72a01b47b257aa983f3",
+    "after_sha256": "f433eb68c5b94b0424b548a2753e33820f123609544c7283ddbf641c72d3532a",
+    "before_text_sha256": "d8606d502e77675c5023c46b38759f00c02a0dc45e53f72a01b47b257aa983f3",
+    "after_text_sha256": "f433eb68c5b94b0424b548a2753e33820f123609544c7283ddbf641c72d3532a"
+  },
+  {
+    "path": "tests/test_generation_v3.py",
+    "before_sha256": "407cb02013fd5ae2b6bf41fbf45a53e724cb953093679f66ab204cb18938654e",
+    "after_sha256": "2e556c660626b84bc3c25befd85f01b36b1c9606a71be6a1fcdfd827a6246507",
+    "before_text_sha256": "407cb02013fd5ae2b6bf41fbf45a53e724cb953093679f66ab204cb18938654e",
+    "after_text_sha256": "2e556c660626b84bc3c25befd85f01b36b1c9606a71be6a1fcdfd827a6246507"
+  },
+  {
+    "path": "tests/test_pipeline_v3.py",
+    "before_sha256": "c2fc91d6738456f9565641d4a1de9f5f90cde94983bc6d0ace55032686cc3a39",
+    "after_sha256": "401e513a0a8ffd8f2c251e62dc002f8f5beb6e631b8d2481058120809bca1995",
+    "before_text_sha256": "c2fc91d6738456f9565641d4a1de9f5f90cde94983bc6d0ace55032686cc3a39",
+    "after_text_sha256": "401e513a0a8ffd8f2c251e62dc002f8f5beb6e631b8d2481058120809bca1995"
+  },
+  {
+    "path": "tests/test_scoped_alignment.py",
+    "before_sha256": "b336cc1682cd490e463a02d748eac7151b2dab53ec41ce09b893d2d3c30d37b5",
+    "after_sha256": "651dc3e1cf2fa72c1ac7e7c9a0114a2213c42ade0d4291f12f54c380870239c8",
+    "before_text_sha256": "b336cc1682cd490e463a02d748eac7151b2dab53ec41ce09b893d2d3c30d37b5",
+    "after_text_sha256": "651dc3e1cf2fa72c1ac7e7c9a0114a2213c42ade0d4291f12f54c380870239c8"
+  },
+  {
+    "path": "tests/test_scope_selection.py",
+    "before_sha256": "9a06370226a30b7e05f6a79dd4b0ad5e6a6c6e710c48e4703f0781851ab9cd9b",
+    "after_sha256": "262f6bf27420443383314ca8965d563fb344a4cf48a0bf36f549ef26cb0ba81e",
+    "before_text_sha256": "9a06370226a30b7e05f6a79dd4b0ad5e6a6c6e710c48e4703f0781851ab9cd9b",
+    "after_text_sha256": "262f6bf27420443383314ca8965d563fb344a4cf48a0bf36f549ef26cb0ba81e"
+  },
+  {
+    "path": "src/boundary_repair/adapters/model.py",
+    "before_sha256": "95b6a7491e38efaa77ad77446184d938eee0bb43f07a5e9bf96c86bd354b3bba",
+    "after_sha256": "00f0574039299d8dbf70a23ffa72e363cadd805aa50ddb77f2a27be91d7551c9",
+    "before_text_sha256": "e56c74ea02ab02bc3866133a11e67fd0ee9086550b3e293568526e99ba1383ed",
+    "after_text_sha256": "643b5a72451a3251f544f2be55976f1be984e0ff9b91ed285d533d21ebcd0396"
+  },
+  {
+    "path": "src/boundary_repair/adapters/repository.py",
+    "before_sha256": "baeda608d92ca3bb2c8151b14e0f21066718646bfbbf763769d3c6a836e79021",
+    "after_sha256": "ace61c6312f8063d110158a1a019a17277d4fc674de86c0035d7a972a06dd4c9",
+    "before_text_sha256": "baeda608d92ca3bb2c8151b14e0f21066718646bfbbf763769d3c6a836e79021",
+    "after_text_sha256": "ace61c6312f8063d110158a1a019a17277d4fc674de86c0035d7a972a06dd4c9"
+  },
+  {
+    "path": "src/boundary_repair/algorithms/rendering.py",
+    "before_sha256": "2115bbc162d2486eccb53cc88cf3cb3bddf91ec13f6f34fd35ad35c89c230af3",
+    "after_sha256": "3c2a1df21b4a453f74c7a962ab11d6640ea4f9cec889c5a393654321dcfa4629",
+    "before_text_sha256": "2115bbc162d2486eccb53cc88cf3cb3bddf91ec13f6f34fd35ad35c89c230af3",
+    "after_text_sha256": "3c2a1df21b4a453f74c7a962ab11d6640ea4f9cec889c5a393654321dcfa4629"
+  },
+  {
+    "path": "src/boundary_repair/experiments/runner.py",
+    "before_sha256": "a00f040ba9f99a30ad0279d095c911912272f0f1836df91f38ec147b6afcf79a",
+    "after_sha256": "7389a7418163f8cb47e91016e762e9275dd0eeba67d70b491fb4bc7935faff51",
+    "before_text_sha256": "9b7e434b98e39836cf2d7531f963eb066ac1c1cfac6926eea54ec6e77fbbc254",
+    "after_text_sha256": "b450910abf11fc2d3c5b82681886d0484a91fe4efbe9419f0717c77f48877c34"
+  }
+]

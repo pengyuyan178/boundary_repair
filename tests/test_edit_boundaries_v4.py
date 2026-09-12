@@ -15,6 +15,7 @@ from boundary_repair.adapters.frontend import analyze_sources
 from boundary_repair.adapters.program import ProgramAdapter
 from boundary_repair.adapters.repository import SourceRepository, PatchCompiler, bind_edit_blocks, transaction_contents
 from boundary_repair.algorithms.rendering import TransactionRenderer, edit_transaction_schema, parse_transaction
+from boundary_repair.algorithms.synthesis import restricted_scope
 from boundary_repair.domain.errors import ExternalServiceError, NoAdmissiblePatch, ValidationError
 from boundary_repair.domain.repair import EditKind, EditTransaction, PatchPlan, SourceEdit
 from boundary_repair.domain.task import RepositorySnapshot
@@ -262,9 +263,14 @@ class EditBoundaryTests(unittest.TestCase):
         artifact = self.program.compile(task(), plan, transaction, self.snap, self.ctx)
         self.assertEqual(model.complete.call_count, 1)
         request = model.complete.call_args.args[0]
-        self.assertEqual(request.schema_name, 'edits.v4')
+        self.assertEqual(request.schema_name, 'edits.v5')
         prompt = json.loads(request.prompt)
         self.assertTrue(all('source' not in b and 'new_text' not in b for b in prompt['blocks']))
+        visible = next(b for b in prompt['blocks'] if b['block_id'] == block.block_id)
+        self.assertEqual(visible['source_start'], METHOD[:160])
+        self.assertEqual(visible['source_end'], METHOD[-160:])
+        self.assertEqual(visible['source_chars'], len(METHOD))
+        self.assertEqual(visible['source_sha256'], block.sha256)
         self.assertEqual(prompt['regions'][0]['source'], SOURCE)
         self.assertEqual(artifact.application_check, 'passed')
         for op in ('replace_lines', 'insert_at', 'replace_region'):
@@ -318,6 +324,143 @@ class EditBoundaryTests(unittest.TestCase):
         with patch('boundary_repair.adapters.frontend.analyze_sources', side_effect=[{'files': [base]}, bad]):
             with self.assertRaisesRegex(ValidationError, 'generated_syntax_invalid'):
                 PatchCompiler(self.cfg).check_syntax({'view.js': SOURCE.encode()}, {'view.js': (SOURCE + '}').encode()}, self.ctx)
+
+    @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+    def test_search_within_authorized_block_preserves_identical_neighbor(self):
+        source = 'const obj = {render() { return "red"; }, next() { return "red"; }};'
+        self.prepare({'view.js': source})
+        block = self.block()
+        self.scope = restricted_scope(self.scope, (block.block_id,))
+        edit = SourceEdit('replace_text', block.block_id, '"blue"', old_text='"red"')
+        self.assertEqual(self.apply(edit)['view.js'].decode(), source.replace('"red"', '"blue"', 1))
+        self.assertEqual(self.compile(edit).syntax_check, 'passed')
+
+    @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+    def test_search_does_not_expand_into_read_context_or_removed_blocks(self):
+        self.prepare({'view.js': SOURCE})
+        block = self.block()
+        neighbor = self.block(symbol='next')
+        self.scope = restricted_scope(self.scope, (block.block_id,))
+        region = self.scope.regions[0]
+        for target, old, error in (
+            (block.block_id, 'untouched', 'search_text_not_found'),
+            (block.block_id, METHOD + '  next()', 'search_text_not_found'),
+            (region.region_id, 'red', 'text_edit_not_declared'),
+            (neighbor.block_id, 'untouched', 'unknown_search_target'),
+        ):
+            with self.subTest(target=target, old=old), self.assertRaisesRegex(ValidationError, error):
+                self.apply(SourceEdit('replace_text', target, 'blue', old_text=old))
+        self.assertEqual(tree_digest(self.snap.root), self.snap.tree_sha256)
+
+    @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+    def test_block_search_is_exact_nonempty_and_unique(self):
+        self.prepare({'view.js': 'function render() { return ["aaaa", "red", "red"]; }'})
+        block = self.block('FunctionDeclaration')
+        for old, error in (('red', 'ambiguous_search_text'), ('aa', 'ambiguous_search_text'),
+                           ('', 'empty_search_text'), ('return  [', 'search_text_not_found')):
+            with self.subTest(old=old), self.assertRaisesRegex(ValidationError, error):
+                self.apply(SourceEdit('replace_text', block.block_id, 'new', old_text=old))
+
+    @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+    def test_nonoverlapping_searches_share_block_and_use_frozen_base(self):
+        self.prepare({'view.js': SOURCE})
+        block = self.block()
+        edits = (SourceEdit('replace_text', block.block_id, 'none', old_text='red'),
+                 SourceEdit('replace_text', block.block_id, 'blue', old_text='none'))
+        expected = SOURCE.replace('none', 'blue').replace('red', 'none')
+        self.assertEqual(self.apply(*edits)['view.js'].decode(), expected)
+        self.assertEqual(self.compile(*edits).application_check, 'passed')
+        with self.assertRaisesRegex(ValidationError, 'search_text_not_found'):
+            self.apply(edits[0], SourceEdit('replace_text', block.block_id, 'x', old_text='blue'))
+
+    @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+    def test_search_overlap_across_parent_and_child_is_rejected(self):
+        self.prepare({'view.js': SOURCE})
+        block = self.block()
+        parent = self.block('ClassDeclaration', 'View')
+        edit = SourceEdit('replace_text', block.block_id, 'blue', old_text='red')
+        for overlap in (edit, SourceEdit('replace_text', parent.block_id, 'green', old_text='red'),
+                        SourceEdit('replace_block', block.block_id, METHOD)):
+            with self.subTest(operation=overlap.operation), self.assertRaisesRegex(
+                    ValidationError, 'overlapping_transaction_edits'):
+                self.apply(edit, overlap)
+
+    @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+    def test_search_keeps_unicode_encoding_and_unedited_line_endings(self):
+        for encoding in ('utf-8', 'utf-16-le', 'utf-16-be'):
+            with self.subTest(encoding=encoding), TemporaryDirectory() as raw:
+                root = Path(raw)
+                text = ('\ufeff' + SOURCE.rstrip('\n')).replace('\n', '\r\n')
+                original = text.encode(encoding)
+                (root / 'view.js').write_bytes(original)
+                snap = RepositorySnapshot(root, 'a' * 40, tree_digest(root))
+                program, ctx = ProgramAdapter(config(self.root)), context()
+                scope = program.source_scope(snap, ctx, 'render')
+                block = next(b for b in scope.blocks if b.symbol == 'render' and b.node_kind == 'MethodDeclaration')
+                edit = SourceEdit('replace_text', block.block_id, '\u84dd\U0001f408', old_text='red')
+                updated = transaction_contents(snap, scope, EditTransaction((edit,)))[1]['view.js']
+                self.assertEqual(updated, text.replace('red', '\u84dd\U0001f408').encode(encoding))
+                plan = PatchPlan('search-encoded', (), EditKind.FREEFORM, (), (), (), edit_scope=scope)
+                self.assertEqual(program.compile(task(), plan, EditTransaction((edit,)), snap, ctx).application_check, 'passed')
+
+    @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+    def test_search_insert_delete_and_newline_removal_are_exact(self):
+        self.prepare({'view.js': SOURCE})
+        block = self.block()
+        edits = (SourceEdit('replace_text', block.block_id, 'const label = "blue";\n    return {label};',
+                            old_text='return {label: "none"};'),
+                 SourceEdit('replace_text', block.block_id, '', old_text='    if (value) { return {label: "red"}; }\n'))
+        self.assertEqual(self.compile(*edits).syntax_check, 'passed')
+        edit = SourceEdit('replace_text', block.block_id, '; ', old_text=';\n')
+        self.assertEqual(self.apply(edit)['view.js'].decode(), SOURCE.replace(';\n', '; '))
+
+    @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+    def test_v5_schema_and_prompt_only_offer_frozen_search_targets(self):
+        from jsonschema import Draft202012Validator
+        self.prepare({'view.js': SOURCE})
+        full = self.scope
+        block, neighbor = self.block(), self.block(symbol='next')
+        self.scope = restricted_scope(self.scope, (block.block_id,))
+        good = {'operation': 'replace_text', 'target': block.block_id, 'old_text': 'red',
+                'new_text': 'blue', 'destination': ''}
+        validator = Draft202012Validator(edit_transaction_schema(self.scope))
+        validator.validate({'edits': [good]})
+        for target in (neighbor.block_id, self.scope.regions[0].region_id, self.scope.files[0].file_id):
+            self.assertFalse(validator.is_valid({'edits': [{**good, 'target': target}]}))
+        model = Mock()
+        model.complete.return_value.text = json.dumps({'edits': [good]})
+        plan = PatchPlan('search-live', (), EditKind.FREEFORM, (), (), (), edit_scope=self.scope, read_scope=full)
+        edits = TransactionRenderer(model).render(task(), plan, self.ctx)
+        self.assertEqual(self.program.compile(task(), plan, edits, self.snap, self.ctx).syntax_check, 'passed')
+        request = model.complete.call_args.args[0]
+        self.assertEqual(request.schema_name, 'edits.v5')
+        payload = json.loads(request.prompt)
+        self.assertIn('untouched', payload['regions'][0]['source'])
+        self.assertEqual([b['block_id'] for b in payload['blocks']], [block.block_id])
+        self.assertIn('Prefer replace_text', request.system)
+        self.assertEqual(model.complete.call_count, 1)
+
+    @unittest.skipUnless(parser_module(), 'requires pinned TypeScript')
+    def test_search_does_not_make_invalid_method_or_separator_valid(self):
+        self.prepare({'view.js': 'const obj = {render() { return "red"; }, next() { return 2; }};'})
+        block = self.block()
+        for old, new in (('return "red";', 'render() { return "blue"; }'),
+                         ('return "red";', 'return "blue"; }'),
+                         ('render() { return "red"; }', 'render() { return "blue"; },')):
+            with self.subTest(new=new), self.assertRaisesRegex(ValidationError, 'generated_syntax_invalid'):
+                self.compile(SourceEdit('replace_text', block.block_id, new, old_text=old))
+        self.assertEqual((self.snap.root / 'view.js').read_text(),
+                         'const obj = {render() { return "red"; }, next() { return 2; }};')
+        case = self.cfg.results_root / self.ctx.run_id / 'cases' / self.ctx.instance_id
+        self.assertFalse((case / 'patch/final.patch').exists())
+
+    def test_edit_failure_components_remain_distinct(self):
+        from boundary_repair.experiments.runner import _failure_checks
+        for code in ('search_text_not_found', 'ambiguous_search_text', 'unknown_search_target',
+                     'text_edit_not_declared', 'overlapping_transaction_edits'):
+            self.assertEqual(_failure_checks(code), ('failed', 'unknown'))
+        self.assertEqual(_failure_checks('generated_syntax_invalid'), ('not_run', 'failed'))
+        self.assertEqual(_failure_checks('http_503'), ('not_run', 'unknown'))
 
 
 if __name__ == '__main__':

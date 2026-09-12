@@ -1,6 +1,6 @@
 # BoundaryRepair 通用接口设计 v3
 
-日期：2026-09-11。当前在线协议更新为 **evidence.v3 + edits.v4（程序拥有的编辑边界）**；历史 v3c 结果保持原样：五题真实回归为 4/5 非空可应用 patch、4 题独立官方评分、0 resolved。该历史成绩不是新协议的实验结果。
+更新日期：2026-09-12。当前事务协议为 **edits.v5（授权范围内的 SEARCH/REPLACE）**；证据协议沿用现有配置。历史 v3c 结果保持原样：五题真实回归为 4/5 非空可应用 patch、4 题独立官方评分、0 resolved。该历史成绩不是新协议的实验结果。
 
 ## 1. 目标与当前证据
 
@@ -174,13 +174,13 @@ GenerationPlan
 
 ### 3.6 EditTransaction：一次输出通用编辑集合，由程序生成 diff
 
-当前在线操作集（`edits.v4`）：
+当前在线操作集（`edits.v5`，首选精确替换）：
 
 ```text
 replace_block(block_id, new_text)
 insert_before(block_id, new_text)
 insert_after(block_id, new_text)
-replace_text(region_id, old_text, new_text)
+replace_text(block_id_or_text_region_id, old_text, new_text)
 create_file(path, content)
 delete_file(file_id)
 rename_file(file_id, destination)
@@ -192,7 +192,9 @@ rename_file(file_id, destination)
 
 TypeScript 5.8.3 只解析检索选中的文件，块目录与语义证明支持独立。每文件最多输出 4096 块并受原有元数据限额约束；冻结目录最多 128 块，按窗口分摊。完整函数/方法等单元优先，再按文本相关度、大小和位置确定性排序。只保留完整落在显示窗口内的节点，不扩大授权范围；块范围包含该节点自身的结束定界符，行首缩进和紧邻的行末换行可随块纳入。块不必可独立作为整个文件解析，例如类方法仍属于原类。
 
-没有可用完整块的窗口，包括非支持语言、可选解析执行失败、原语法错误和截断窗口，生成前固定为 `edit_mode=text`。该模式的 `old_text` 必须逐字符精确且唯一匹配；空搜索仅对空窗口合法。插入可以把唯一原文替换为“原文加新内容”；删除使用空 `new_text`。不做模糊匹配、行号回退、括号猜补或第二次模型调用。已有块的 syntax 窗口不开放文本操作，不能绕过冻结块边界。
+没有可用完整块的窗口，包括非支持语言、可选解析执行失败、原语法错误和截断窗口，生成前固定为 `edit_mode=text`。`replace_text` 的目标可以是已授权块或 text 窗口；`old_text` 必须在该目标的原编码范围内逐字符精确且唯一匹配。syntax 窗口 ID 仍禁止文本操作，收窄后保留的阅读上下文不增加写权限。同一块可包含多个不重叠匹配；所有匹配基于冻结原文，不依赖前一编辑的输出。空搜索仅对空 text 窗口合法。插入把唯一原文替换为“原文加新内容”；删除使用空 `new_text`。新文本保留现有换行风格，但精确替换不自动补回被搜索消耗的末尾换行。不做模糊匹配、行号回退、括号猜补或第二次模型调用。
+
+块目录给出原文哈希、字符数及 `source_start/source_end` 首尾各至多160字符的精确片段，说明替换单元包含哪些括号、逗号与空白；片段可能重叠，不可拼接。完整源码仍从阅读窗口取得，不重复展示每个嵌套块的全部内容。`new_text` 只替换匹配到的 `old_text`；更大范围必须已在生成前授权，不能自动扩展到父块或整文件。受限表达式合成继续使用原有局部语法。
 
 真实请求 Schema 枚举当前块 ID、text 窗口 ID 和完整文件 ID，未将任意字符串留作已有目标。编译器重新验证目标、哈希、原文唯一性和原子事务冲突。旧 `replace_region` 仍供 certified 布尔合成内部使用；底层行号兼容不能成为模型逃离新协议的入口。
 

@@ -104,6 +104,10 @@ def _failure_checks(component: str) -> tuple[str, str]:
         "generated_patch_apply_failed",
         "generated_patch_bytes_mismatch",
         "generated_patch_mode_mismatch",
+        "empty_search_text", "search_text_not_found", "ambiguous_search_text",
+        "unknown_search_target", "text_edit_not_declared", "unknown_edit_block",
+        "overlapping_transaction_edits", "stale_source_hash", "stale_region_hash",
+        "stale_edit_block_hash",
     }
     syntax = {"generated_syntax_invalid", "generated_json_invalid"}
     return (
