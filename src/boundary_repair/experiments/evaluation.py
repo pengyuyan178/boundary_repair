@@ -1,6 +1,7 @@
 """Separate official Docker grading. No generation module imports this file or sees test results."""
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 from typing import Protocol
@@ -62,9 +63,52 @@ def validate_predictions(path: Path) -> tuple[dict[str, str], ...]:
     return tuple(rows)
 
 
+def browser_audit(log: str) -> dict:
+    """Require complete Chrome and Firefox runs using the existing Chart.js evaluator protocol."""
+    clean = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", log).replace("\r", "\n")
+    start_marker, end_marker = ">>>>> Start Test Output", ">>>>> End Test Output"
+    boundaries = start_marker in clean and end_marker in clean
+    if boundaries:
+        clean = clean.split(start_marker, 1)[1].split(end_marker, 1)[0]
+    executions = {}
+    for browser, executed, total in re.findall(
+        r"(Chrome|Firefox) [^\n]*?Executed (\d+) of (\d+)", clean
+    ):
+        executions[browser] = {"executed": int(executed), "total": int(total)}
+    disconnects = [line for line in clean.splitlines() if "disconnected" in line.lower()]
+    completed = boundaries and not disconnects and all(
+        executions.get(browser, {}).get("total", 0) > 0
+        and executions[browser]["executed"] == executions[browser]["total"]
+        for browser in ("Chrome", "Firefox")
+    )
+    return {"both_browsers_completed": completed, "executions": executions,
+            "runtime_disconnects": disconnects}
+
+
+def evaluation_integrity(directory: Path, identifier: str, payload: dict) -> dict:
+    """Accept a grade only with test boundaries, a compatible exit status and completed browsers."""
+    path = directory / 'test_output.txt'
+    if not path.is_file():
+        return {'complete': False, 'reason': 'missing_test_output'}
+    log = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", path.read_text(encoding='utf-8'))
+    codes = re.findall(r'^>>>>> Test Exit Code: (\d+)\s*$', log, re.MULTILINE)
+    start, end = log.find('>>>>> Start Test Output'), log.find('>>>>> End Test Output')
+    complete = (start >= 0 and end > start and len(codes) == 1
+                and not payload.get('infra_failure', False))
+    code = int(codes[0]) if len(codes) == 1 else None
+    complete = complete and code in {0, 1} and (payload.get('resolved') is False or code == 0)
+    browser = browser_audit(log) if identifier.startswith('chartjs__Chart.js-') else None
+    if browser is not None:
+        complete = complete and browser['both_browsers_completed']
+    return {'complete': complete, 'test_exit_code': code, 'browser_audit': browser,
+            'reason': None if complete else 'incomplete_or_inconsistent_test_execution',
+            'test_output_sha256': file_sha256(path)}
+
+
 def parse_case_reports(root: Path, identifiers: tuple[str, ...]) -> dict[str, bool]:
-    """Read only per-instance report.json objects; process success is not considered a grade."""
+    """Read per-instance grades only after validating their actual test execution logs."""
     results: dict[str, bool] = {}
+    seen = set()
     for path in sorted(root.rglob('report.json')):
         data = strict_json(path.read_text(encoding='utf-8'), maximum=16000000)
         for identifier in identifiers:
@@ -74,9 +118,13 @@ def parse_case_reports(root: Path, identifiers: tuple[str, ...]) -> dict[str, bo
             value = payload.get('resolved')
             if type(value) is not bool:
                 continue
-            if identifier in results:
+            if identifier in seen:
                 raise ValidationError('duplicate_evaluation_case_report')
-            results[identifier] = value
+            seen.add(identifier)
+            integrity = evaluation_integrity(path.parent, identifier, payload)
+            write_json(path.parent / 'execution_integrity.json', integrity)
+            if integrity['complete']:
+                results[identifier] = value
     return results
 
 
@@ -91,6 +139,8 @@ class OfficialDockerEvaluator:
 
     def evaluate(self, request: EvaluationRequest) -> EvaluationReport:
         """A8: validate artifact/version/image bindings, run harness once, then parse actual grades."""
+        if os.environ.get('BOUNDARY_GENERATION_ROLE') == 'isolated_worker':
+            raise ConfigurationError('evaluation_forbidden_in_generation_worker')
         rows = validate_predictions(request.predictions)
         ids = tuple(row['instance_id'] for row in rows)
         batch_manifest = strict_json((request.batch_directory / 'manifest.json').read_text(encoding='utf-8'))
@@ -99,8 +149,22 @@ class OfficialDockerEvaluator:
         selected = batch_manifest.get('selected_instances', [])
         if not isinstance(selected, list) or not set(ids) <= set(selected):
             raise ValidationError('prediction_not_in_selected_batch')
-        if batch_manifest.get('dataset_sha256') != file_sha256(request.dataset):
+        expected_dataset = batch_manifest.get('evaluation_dataset_sha256', batch_manifest.get('dataset_sha256'))
+        if expected_dataset != file_sha256(request.dataset):
             raise ValidationError('dataset_changed_since_generation')
+        if batch_manifest.get('protocol') == 'isolated-generation-v1':
+            frozen = strict_json((request.batch_directory / 'generation_frozen.json').read_text(encoding='utf-8'))
+            if frozen['protocol'] != batch_manifest['protocol'] or frozen['attempted'] != len(selected):
+                raise ValidationError('complete_isolated_generation_required')
+            for name, key in (('manifest.json', 'manifest_sha256'), ('results.jsonl', 'results_sha256'),
+                              ('predictions.jsonl', 'predictions_sha256')):
+                if file_sha256(request.batch_directory / name) != frozen[key]:
+                    raise ValidationError('frozen_generation_artifact_changed')
+            if file_sha256(request.image_manifest) != frozen['image_manifest_sha256']:
+                raise ValidationError('frozen_image_manifest_changed')
+            frozen_rows = validate_predictions(request.batch_directory / 'predictions.jsonl')
+            if any(row not in frozen_rows for row in rows):
+                raise ValidationError('prediction_not_in_frozen_generation')
         manifest = strict_json(request.image_manifest.read_text(encoding='utf-8'))
         options = manifest.get('evaluation', {})
         if not isinstance(options, dict) or set(options) - {'namespace', 'instance_image_tag', 'max_workers', 'timeout_seconds'}:
@@ -149,10 +213,19 @@ class OfficialDockerEvaluator:
         evaluation_id = safe_component(request.evaluation_id)
         root = request.batch_directory / 'evaluation' / evaluation_id
         root.mkdir(parents=True, exist_ok=False)
+        harness_dataset = request.dataset
+        if request.dataset.suffix.lower() == '.json':
+            raw_dataset = json.loads(request.dataset.read_text(encoding='utf-8-sig'))
+            if isinstance(raw_dataset, dict):
+                if any(not isinstance(row, dict) or row.get('instance_id') != key
+                       for key, row in raw_dataset.items()):
+                    raise ValidationError('dataset_mapping_id_mismatch')
+                harness_dataset = root / 'dataset.json'
+                write_json(harness_dataset, list(raw_dataset.values()))
         prediction_hash = file_sha256(request.predictions)
         # Unique cwd + evaluation id + content hash prevent accidental cache reuse.
         run_id = safe_component(evaluation_id[:96] + '-' + prediction_hash[:16])
-        arguments = [python, '-m', 'swebench.harness.run_evaluation', '--dataset_name', str(request.dataset),
+        arguments = [python, '-m', 'swebench.harness.run_evaluation', '--dataset_name', str(harness_dataset),
                      '--predictions_path', str(request.predictions), '--run_id', run_id,
                      '--max_workers', str(workers), '--timeout', str(timeout)]
         for key in ('namespace', 'instance_image_tag'):
@@ -161,7 +234,8 @@ class OfficialDockerEvaluator:
                     raise ConfigurationError('unsupported_harness_image_option')
                 arguments.extend(['--' + key, options[key]])
         write_json(root / 'request.json', {'arguments': arguments, 'prediction_sha256': prediction_hash,
-                   'dataset_sha256': file_sha256(request.dataset), 'installed_harness': installed,
+                   'dataset_sha256': file_sha256(request.dataset),
+                   'harness_dataset_sha256': file_sha256(harness_dataset), 'installed_harness': installed,
                    'image_bindings': image_bindings, 'runtime_image_race_protection': False})
         # Bounded outer deadline accommodates per-instance execution and image setup. No retries.
         result = run_process(arguments, cwd=root, timeout=(timeout + 600) * len(ids) + 300,

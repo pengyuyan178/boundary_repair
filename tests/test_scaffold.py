@@ -31,12 +31,17 @@ from boundary_repair.config import ModuleSelection, load_config
 from boundary_repair.domain.errors import (
     BudgetExceeded, ConfigurationError, DatasetFormatError, ImplementationRequired,
 )
-from boundary_repair.domain.repair import EditKind, PatchArtifact, PatchPlan, SynthesisResult
+from boundary_repair.domain.repair import (
+    BoundaryAssessment, EditKind, EditScope, FileState, HoleFilling, LocalizationResult,
+    PatchArtifact, PatchPlan, RepairBoundary, SynthesisResult, SyntaxHole,
+    ExpressivityVerdict,
+)
 from boundary_repair.domain.runtime import BudgetLedger, BudgetLimits, RunContext, SearchPolicy
 from boundary_repair.domain.specification import (
-    ContractSet, Coverage, InterpretationSpace, SolverStatus,
+    BehaviorConstraint, ClaimKind, ContractSet, Coverage, EvidenceBundle, EvidenceClaim,
+    InterpretationSpace, ObservationInterface, EntryCase, ObservationKey, SolverStatus, Term,
 )
-from boundary_repair.domain.task import RepositorySnapshot, TaskInput
+from boundary_repair.domain.task import ProgramIndex, RepositorySnapshot, SourceSpan, TaskInput
 from boundary_repair.experiments.runner import run_generation
 from boundary_repair.pipeline import RepairPipeline
 
@@ -225,16 +230,21 @@ class ScaffoldTests(unittest.TestCase):
         locator.locate.assert_not_called()
         synth.synthesize.assert_not_called()
 
-    def test_specification_rejects_malformed_response(self) -> None:
-        """实现后验证坏模型输出不能冒充规格，而不是继续要求占位异常。"""
-        from boundary_repair.domain.errors import ValidationError
-        from boundary_repair.domain.task import ProgramIndex
+    def test_specification_returns_unavailable_for_malformed_response(self) -> None:
+        """坏模型输出成为显式 unavailable 规格，不触发第二次请求或伪造约束。"""
         program, model = Mock(), Mock()
+        program.source_scope.return_value = EditScope((), (), ())
+        program.observation_interfaces.return_value = ()
+        program.observation_scenarios.return_value = ()
         program.index.return_value = ProgramIndex((), ())
         model.complete.return_value.text = "not JSON"
-        with self.assertRaises(ValidationError):
-            SpecificationRecovery(model, program, Mock()).recover(
-                project_task(raw_task()), RepositorySnapshot(self.root, "a" * 40, "x"), context())
+        result = SpecificationRecovery(model, program, Mock()).recover(
+            project_task(raw_task()), RepositorySnapshot(self.root, "a" * 40, "x"), context())
+        self.assertEqual(result.extraction_status, "unavailable")
+        self.assertEqual(result.must, ())
+        self.assertEqual(result.frames, ())
+        self.assertEqual(result.theory.coverage, Coverage.PARTIAL)
+        self.assertEqual(model.complete.call_count, 1)
 
     def test_model_adapter_does_not_fake_response(self) -> None:
         """未配置真实 API 时抛配置错误，不能隐式回落到离线 fixture。"""
@@ -324,7 +334,8 @@ class ScaffoldTests(unittest.TestCase):
         pipeline, workspace = Mock(), Mock()
         pipeline.repair.return_value = output()
         workspace.open_base.return_value = nullcontext(RepositorySnapshot(self.root, "a" * 40, "synthetic"))
-        report = run_generation(self.config, (project_task(raw_task()),), "mock-storage", pipeline, workspace)
+        with patch('boundary_repair.adapters.model.prepare_task_assets', side_effect=lambda task, _config, _context: task):
+            report = run_generation(self.config, (project_task(raw_task()),), "mock-storage", pipeline, workspace)
         self.assertEqual(report.generated, 1)
         self.assertIsNone(report.resolved)
         case = report.batch_path / "cases" / "example__repo-1"
@@ -389,7 +400,13 @@ class ScaffoldTests(unittest.TestCase):
 
     def test_specification_internal_steps_are_connected(self) -> None:
         """替换叶子仅检验 S1→S2→S3→S4 的真实编排，不实现规格算法。"""
-        evidence, bindings, space = Mock(), (), Mock()
+        evidence = EvidenceBundle(
+            (),
+            (EvidenceClaim("synthetic-requirement", ClaimKind.REQUIREMENT,
+                           Term("symbol", value="requirement"), (), ()),),
+        )
+        bindings = ()
+        space = InterpretationSpace((), (), SolverStatus.UNKNOWN, Coverage.PARTIAL)
         task, run = project_task(raw_task()), context()
         snapshot = RepositorySnapshot(self.root, "a" * 40, "synthetic")
         service = SpecificationRecovery(Mock(), Mock(), Mock())
@@ -422,17 +439,51 @@ class ScaffoldTests(unittest.TestCase):
 
     def test_synthesis_preserves_unresolved_obligations(self) -> None:
         """作用域未决义务必须传播到 SynthesisResult，不能因 diff 生成而消失。"""
-        plan = replace(output().plan, unresolved=("SYNTHETIC_UNPROVEN_FRAME",))
+        source = b"active || hidden"
+        path = self.root / "example.js"
+        path.write_bytes(source)
+        digest = hashlib.sha256(source).hexdigest()
+        site = SourceSpan("example.js", 1, 1, digest, 0, len(source), "BooleanExpression", "shouldShow")
+        scope = EditScope((FileState("F000", "example.js", digest, len(source), 0o644, "utf-8", True),), (), ())
+        target = ObservationKey(
+            "shouldShow", "return",
+            Term("and", (Term("eq", (Term("symbol", value="active"), Term("literal", value=True))),
+                         Term("eq", (Term("symbol", value="hidden"), Term("literal", value=False))))),
+        )
+        obligation = BehaviorConstraint(
+            "synthetic-requirement", ClaimKind.REQUIREMENT, (target,),
+            Term("eq", (Term("symbol", value="return"), Term("literal", value=True))), (),
+            entry_cases=(EntryCase(ObservationInterface('synthetic-entry', site, ('active', 'hidden'), 'synthetic'),
+                                   (('active', True), ('hidden', False)), True),),
+        )
+        plan = PatchPlan(
+            "synthetic-only", (), EditKind.REFINE_GUARD,
+            (SyntaxHole("hole-0", site, "boolean-expression", ("active", "hidden")),),
+            (obligation,), (), unresolved=("SYNTHETIC_UNPROVEN_FRAME",),
+        )
         task, run, specification = project_task(raw_task()), context(), contracts()
-        snapshot, localization = RepositorySnapshot(self.root, "a" * 40, "synthetic"), Mock()
+        snapshot = RepositorySnapshot(self.root, "a" * 40, "synthetic")
+        localization = LocalizationResult((BoundaryAssessment(
+            RepairBoundary("synthetic-boundary", (site,), EditKind.REFINE_GUARD, (), ()),
+            ExpressivityVerdict.FEASIBLE, (), None,
+        ),))
+        fillings = (HoleFilling("hole-0", "active && !hidden"),)
         program = Mock()
+        program.source_scope.return_value = scope
         program.materialize.return_value = output().patch
         service = ScopeSynthesis(Mock(), program, Mock())
         with patch.object(ScopeSynthesis, "enumerate_plans", return_value=(plan,)), \
              patch.object(ScopeSynthesis, "select_minimal_scope", return_value=plan), \
-             patch.object(ScopeSynthesis, "fill_holes", return_value=()):
+             patch.object(ScopeSynthesis, "fill_holes", return_value=fillings):
             result = service.synthesize(task, specification, localization, snapshot, run)
-        program.materialize.assert_called_once_with(task, plan, (), snapshot, run)
+        materialized_task, materialized_plan, materialized_fillings, materialized_snapshot, materialized_run = (
+            program.materialize.call_args.args
+        )
+        self.assertEqual(materialized_task, task)
+        self.assertEqual(materialized_plan.unresolved, ("SYNTHETIC_UNPROVEN_FRAME",))
+        self.assertEqual(materialized_fillings, fillings)
+        self.assertEqual(materialized_snapshot, snapshot)
+        self.assertEqual(materialized_run, run)
         self.assertEqual(result.unresolved, ("SYNTHETIC_UNPROVEN_FRAME",))
 
 

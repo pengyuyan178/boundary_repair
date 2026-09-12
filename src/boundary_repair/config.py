@@ -43,6 +43,9 @@ class IntegrationSettings:
     max_boundaries: int = 40
     response_tokens: int = 8000
     http_timeout: int = 180
+    response_format: str = "json_schema"
+    asset_attempts: int = 3
+    asset_retry_delay: int = 1
     allow_local_http: bool = False
     max_asset_bytes: int = 10000000
     max_assets: int = 8
@@ -226,6 +229,10 @@ def parse_integration(value: object, root: Path, target: str) -> IntegrationSett
                 raise ConfigurationError(f"{key} must be text")
             parsed[key] = raw
     settings = IntegrationSettings(**parsed)
+    if settings.response_format not in {'json_schema', 'json_object'}:
+        raise ConfigurationError('unsupported_response_format')
+    if settings.asset_attempts > 5:
+        raise ConfigurationError('asset_attempts must be <= 5')
     if settings.model_mode not in {"http", "fixture"} or settings.parser_mode not in {"typescript", "text"}:
         raise ConfigurationError("unsupported model/parser mode")
     if settings.workspace_mode not in {"docker", "git_archive"}:

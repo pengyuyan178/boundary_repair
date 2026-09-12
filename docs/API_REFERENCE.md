@@ -1,6 +1,25 @@
 # 函数 API 与注释索引
 
-由 scripts/audit_functions.py 从实际源码生成。覆盖只是执行证据，不是正确性证明。
+这是 v0.2.0 初次交付时由 scripts/audit_functions.py 生成的历史快照，保留当时的覆盖证据，不代表当前签名或覆盖率。当前签名以 src/ 源码为准，覆盖只是执行证据，不是正确性证明。
+
+## 当前在线编辑接口（2026-09-11）
+
+当前事务编辑使用 `edits.v5`；证据使用 `evidence.v6` 的程序情境关联协议，见文末补充及 `MECHANISM_ACTIVATION.md`。下文原函数索引保留为历史记录。
+
+```python
+ProgramAdapter.source_scope(snapshot, context, query='') -> EditScope
+bind_edit_blocks(snapshot, scope, analysis, query, maximum=128) -> EditScope
+ProgramAdapter.freeze_plan(plan, context) -> None
+edit_transaction_schema(scope=None) -> dict
+TransactionRenderer.render(task, plan, context) -> EditTransaction
+parse_transaction(text) -> EditTransaction
+transaction_contents(snapshot, scope, transaction, max_file_bytes=512000) -> tuple
+PatchCompiler.compile(task, plan, transaction, snapshot, context) -> PatchArtifact
+```
+
+`EditScope.blocks` 为 `EditBlock(block_id, region_id, start_byte, end_byte, sha256, node_kind, symbol)` 的不可变元组；字节区间左闭右开且绑定原文件编码。`EditRegion.edit_mode` 在生成前固定为 `syntax` 或 `text`。
+
+模型操作只接受 `operation / target / new_text / old_text / destination` 五字段。首选 `replace_text`：target 为已授权块 ID 或文本模式窗口 ID，old_text 须在该目标内唯一精确匹配。syntax 阅读窗口的 ID 不能授予全文替换权限。`replace_block / insert_before / insert_after` 保留兼容；完整文件操作仍受冻结权限限制。`SourceEdit.first_line/last_line` 是内部历史兼容字段，不是当前模型参数。完整契约与限制见 [INTERFACE_V3_DESIGN.md](INTERFACE_V3_DESIGN.md)。
 
 ## src/boundary_repair/adapters/dataset.py
 
@@ -1439,3 +1458,6 @@ TracePort.save(self, name: str, artifact: StageArtifact) -> None
 以固定文件名持久化类型化中间产物；路径限制由存储适配器负责。
 
 状态：interface_declaration；语句执行：0/0。
+# 三层机制协议补充
+
+当前生成证据使用 `evidence.v6`，普通事务仍为 `edits.v5`。新增程序情境目录、绑定备选、部分义务编译检查，以及不清空其他模块输入的消融交接，见 [MECHANISM_ACTIVATION.md](MECHANISM_ACTIVATION.md)。历史证据读取继续使用对应旧解析入口。

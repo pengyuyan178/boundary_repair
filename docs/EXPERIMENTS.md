@@ -14,13 +14,23 @@ Windows 仅用于开发/检查；正式配置 target=server 强制 Docker+HTTP�
 model.name_env/endpoint_env/api_key_env 是已有 code/.env 的键名，不是值。
 默认 MODEL_NAME/MODEL_BASE_URL/MODEL_API_KEY；按实际已有键修改配置。支持有引号/注释的简单赋值，不执行扩展。
 调用时才读取，环境变量覆盖文件；结果目录不保存密钥。HTTP JSON 协议要求 completion_tokens、finish_reason=stop。
-本版不自适应切换参数，也不自动网络重试；不兼容该 Chat Completions 协议的服务会明确失败。
+本版不自适应切换参数，也不自动重试模型请求。默认发送 `response_format.type=json_schema`、
+`strict=true` 和真实递归 Schema。仅显式配置 `integration.response_format=json_object` 才使用 JSON mode，
+两者执行同样的本地 v2 来源、逻辑形状、候选组和编辑检查。不能依据某题结果自动切换。
+401/403/404 和明确指向 Schema 的 400/422 作为配置阻断；上下文超限等单题错误不据此阻断整个批次。
+服务端未说明原因的拒绝保留为外部服务错误，不猜测支持能力。
+
+`integration.asset_attempts` 默认为 3，最大 5；`asset_retry_delay` 默认 1 秒，按指数退避。
+只重试图片传输中的暂时超时、连接中断、临时 DNS 和指定暂态 HTTP 状态，计入原墙钟预算。
+证书、私网目的地、MIME/大小错误、重定向和普通 4xx 不重试。
+工作区就绪后独立预取图片；后续模型调用复用逐题缓存，不重复下载。
+缓存损坏明确失败，不静默换图；日志保留错误类别而不是可能含敏感信息的底层消息。
 
 ## 3. Node/TypeScript
 
 在 code/boundary_repair 执行 `npm ci --ignore-scripts --no-audit --no-fund`，固定 5.8.3。
 也可以明确指定可信已安装 package 路径。node_candidates 可填可执行文件或其目录；随后回退 PATH。
-给出的两个 Node 候选路径仍保留，但从未声明已访问或可用。
+每次冻结都须核实这些路径；候选路径本身不是可用性的证明。
 
 ## 4. 正式镜像/评分配置
 
@@ -44,14 +54,34 @@ harness_revision 显式使用 `version:<确切版本>` 或 `git:<40位commit>`�
 cd /home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/code/boundary_repair
 python run.py doctor --config configs/server_docker.json
 python run.py inspect --config configs/chartjs_server.json --repo chartjs/Chart.js
-python run.py generate --config configs/chartjs_server.json --repo chartjs/Chart.js --limit 1 --batch chartjs-smoke-001
-python run.py evaluate --config configs/chartjs_server.json \
-  --batch-directory /home/ubuntu/anaconda3/envs/pyy/paper/newGUIRepair/result/method/boundary_repair/chartjs-smoke-001 \
-  --evaluation-id chartjs-grade-001
 ```
 
+服务器生成必须使用 `scripts/run_layers.py` 的独立进程入口。`run.py generate` 的服务器模式直接拒绝执行。
+每个新批次的 `<launch>` 目录应包含已冻结的 `method_snapshot/`、`source_files.sha256.json`
+和 `runtime_template.json`；TypeScript 安装在快照的 `node_modules/typescript/`。
+沿用已验证的 GPT-4.1 配置和 seed 42，按完整 dev（100题）或 test（480题）选择输入。
+
+```bash
+python <launch>/method_snapshot/scripts/run_layers.py --mode prepare --split dev --launch <launch>
+python <launch>/method_snapshot/scripts/run_layers.py --mode generate --launch <launch>
+python <launch>/method_snapshot/scripts/run_layers.py --mode evaluate --launch <launch>
+```
+
+这三个命令必须分别启动。`prepare` 属于评测侧的数据导出步骤，可以读取原始答案；
+它只输出严格白名单的任务、issue 附件及镜像标识。生成调度器只读净化后的输入，
+每个实际执行算法的进程运行在独立非 root Docker 容器中；容器只挂载该题的输入、
+修复前生产源码、只读方法代码/解析器和自己的输出目录，不挂载原始数据、宿主项目、
+其他案例产物或 Docker socket。镜像由 `scripts/Dockerfile.generator` 构建，默认标签为
+`boundary-repair-generator:20260912`，每批记录实际镜像 ID。
+
+生成容器退出后才收集产物，全部生成结束后冻结预测、结果、批次清单和镜像清单。
+评测是另一次独立启动；它先校验冻结文件，再读取原始数据。它不会调用生成器，
+评分不能回流为下一次模型输入。准备端和评分端属于可信评测侧，宿主调度器仍有 Docker
+管理权限；文件访问隔离的对象是实际运行模型和算法的生成容器。
+
 这里的 python 指已经激活并验证的服务器解释器，不预设未知可执行路径。
-不要直接开始全量：正式 API/Docker/镜像/harness 在本交付环境没有联调。
+旧随机 10 题批次已联调真实 API/Docker/harness，结果为 0/10。v2 不能继承旧版的供应商兼容性结论；
+工程回归、供应商协议验证与正式任务评测应分开记录。
 
 ## 6. 参数含义
 
@@ -64,16 +94,30 @@ require_witness 在可表达性路径要求见证；缺失时 UNKNOWN，普通�
 ## 7. 结果与评分
 
 默认 result/method/boundary_repair/<batch>，baseline 目录原样保留。
-原始 dataset/方法源码/预测有哈希；模型实际响应元数据对象有 provider ID/usage，但本版未记录完整原始 HTTP 请求历史。
-不是完整可重放在线 API 账本。不得称 fixture 为真实模型、generated 为 resolved。
+原始 dataset/方法源码/预测有哈希；每个模型请求保存 prompt、Schema、参数、附件 ID/hash，
+响应保存文本、实际模型名、provider ID/usage 与响应字节哈希。认证头与图片 base64 不进入请求日志。
+这不是可以重现远端模型随机性的完整账本。不得称 fixture 为真实模型、generated 为 resolved。
 
 官方预测三字段为 instance_id/model_name_or_path/model_patch。
 run_id 包含 evaluation_id 和预测哈希，避免不同补丁复用旧缓存。
-读逐题 report.json 的真实布尔 resolved；selected/submitted/graded/infrastructure_errors 分开。
+逐题 report.json 的布尔 resolved 还须通过测试日志完整性检查：有开始/结束标记和唯一退出码；
+成功必须对应退出码0。Chart.js 还须 Chrome 与 Firefox 均执行完整测试且没有断连。
+完整执行但测试失败仍可记为未修复；日志缺失、浏览器中断或成功状态与退出码矛盾时，
+只记 infrastructure_errors，并保留原始报告及 execution_integrity.json。
+selected/submitted/graded/infrastructure_errors 分开。
 生成未成功的题目仍在 selected 分母，不从总解决率中删除。
 
 ## 8. 实际验证层级
 
-自测：有限域、证据、AST、真实 Git/Node/HTTP loopback、八种模块组合。
-模拟验证：TLS 下载响应、Docker 参数/清理、官方 harness 版本/报告契约。
-未验证：Windows OS 分支、用户 SSH、真实供应商、公共图像感知、Docker daemon、官方真实任务成绩。
+自测：有限域、证据、AST、真实 Git/Node/HTTP loopback、八种模块组合；新记录在
+`verification/20260910_local_edits/`，旧交付的验证文件保留但不能当作当前覆盖率。
+模拟验证：TLS 图片传输及重试、Docker 参数/清理、官方 harness 版本/报告契约。
+真实服务和正式成绩需按具体版本、批次分别记载；尤其不能把 v2 工程测试当作真实模型修复成功。
+
+## 9. 冻结与比较
+
+证据协议、检索、图片缓存/重试、局部编辑与结构预算必须同步用于研究版本和普通对照。
+改变 response_format 或其他协议配置要生成新批次并记录，不允许在某题失败后偷偷切换。
+固定原 seed、模型、候选/调用/token/时间上限；不读取 gold/test patch/修复后图片来决定位置或生成内容。
+同组开发回归只能用于开发诊断，不作为独立泛化证据；正式比较须冻结版本后使用独立选择的完整评测集合。
+不执行多轮模型纠错或官方测试反馈，UNKNOWN/无补丁/附件失败的题目仍保留在 selected 分母。

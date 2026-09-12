@@ -78,6 +78,37 @@ def load_tasks(path: Path) -> tuple[TaskInput, ...]:
     return tuple(tasks)
 
 
+def load_generation_tasks(path: Path) -> tuple[TaskInput, ...]:
+    """Load an answer-free task list with exact task and issue-asset field allowlists."""
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or not rows:
+        raise DatasetFormatError("generation_tasks_must_be_nonempty_list")
+    tasks = []
+    seen = set()
+    fields = {"instance_id", "repo", "base_commit", "problem_statement", "assets"}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != fields:
+            raise DatasetFormatError("generation_task_fields_not_allowlisted")
+        if any(not isinstance(row[k], str) or not row[k].strip() for k in fields - {"assets"}):
+            raise DatasetFormatError("invalid_generation_task_identity")
+        if not isinstance(row["assets"], list):
+            raise DatasetFormatError("generation_assets_must_be_list")
+        assets = []
+        for asset in row["assets"]:
+            if not isinstance(asset, dict) or set(asset) != {"uri", "source_id", "media_type"}:
+                raise DatasetFormatError("generation_asset_fields_not_allowlisted")
+            if any(not isinstance(asset[k], str) or not asset[k] for k in ("uri", "source_id")):
+                raise DatasetFormatError("invalid_generation_issue_asset")
+            if asset["media_type"] is not None and not isinstance(asset["media_type"], str):
+                raise DatasetFormatError("invalid_generation_asset_media_type")
+            assets.append(IssueAsset(**asset))
+        if row["instance_id"] in seen:
+            raise DatasetFormatError("duplicate_generation_task")
+        seen.add(row["instance_id"])
+        tasks.append(TaskInput(**{k: row[k] for k in fields - {"assets"}}, assets=tuple(assets)))
+    return tuple(tasks)
+
+
 def select_tasks(
     tasks: tuple[TaskInput, ...], *, repo: str | None = None,
     instance_ids: tuple[str, ...] = (), limit: int | None = None,

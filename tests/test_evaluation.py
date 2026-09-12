@@ -34,6 +34,9 @@ class EvaluationTests(unittest.TestCase):
             return ProcessResult(0,b'--dataset_name --predictions_path --run_id --max_workers --timeout',b'')
         root=kwargs['cwd'];report=root/'logs/evaluation/run/model/demo__ui-1/report.json'
         write_json(report,{'demo__ui-1':{'resolved':True}})
+        (report.parent/'test_output.txt').write_text(
+            '>>>>> Start Test Output\nsynthetic test passed\n'
+            '>>>>> End Test Output\n>>>>> Test Exit Code: 0\n')
         kwargs['output_file'].write_text('synthetic harness stdout')
         return ProcessResult(0,b'',b'')
 
@@ -48,6 +51,26 @@ class EvaluationTests(unittest.TestCase):
         write_json(self.batch/'manifest.json',{'execution_mode':'fixture'})
         with self.assertRaisesRegex(ConfigurationError,'fixture'):
             OfficialDockerEvaluator().evaluate(self.request)
+
+    def test_mapping_is_converted_losslessly_only_for_harness(self):
+        raw = {'demo__ui-1': {'instance_id': 'demo__ui-1', 'patch': 'synthetic-gold',
+                            'test_patch': 'synthetic-test', 'FAIL_TO_PASS': ['demo-test'],
+                            'image_assets': {'problem_statement': ['https://example.invalid/image.png']}}}
+        write_json(self.dataset, raw)
+        before = file_sha256(self.dataset)
+        manifest = json.loads((self.batch/'manifest.json').read_text())
+        manifest['dataset_sha256'] = before
+        write_json(self.batch/'manifest.json', manifest)
+        with patch('boundary_repair.experiments.evaluation.run_process', side_effect=self.fake_process):
+            OfficialDockerEvaluator().evaluate(self.request)
+        root = self.batch/'evaluation/test-grade'
+        self.assertEqual(json.loads((root/'dataset.json').read_text()), list(raw.values()))
+        self.assertEqual(file_sha256(self.dataset), before)
+        saved = json.loads((root/'request.json').read_text())
+        args = saved['arguments']
+        self.assertEqual(args[args.index('--dataset_name')+1], str(root/'dataset.json'))
+        self.assertEqual(saved['dataset_sha256'], before)
+        self.assertEqual(saved['harness_dataset_sha256'], file_sha256(root/'dataset.json'))
 
     def test_harness_revision_mismatch_stops_before_run(self):
         from dataclasses import replace
@@ -69,6 +92,38 @@ class EvaluationTests(unittest.TestCase):
             OfficialDockerEvaluator().evaluate(self.request)
             with self.assertRaises(FileExistsError):
                 OfficialDockerEvaluator().evaluate(self.request)
+
+    def test_generation_worker_cannot_start_grader(self):
+        with patch.dict('os.environ', {'BOUNDARY_GENERATION_ROLE': 'isolated_worker'}):
+            with self.assertRaisesRegex(ConfigurationError, 'evaluation_forbidden'):
+                OfficialDockerEvaluator().evaluate(self.request)
+
+    def freeze_isolated_batch(self):
+        """Create a synthetic immutable batch with distinct public and evaluation dataset hashes."""
+        manifest = json.loads((self.batch/'manifest.json').read_text())
+        manifest.update(protocol='isolated-generation-v1', dataset_sha256='public-input-hash',
+                        evaluation_dataset_sha256=file_sha256(self.dataset))
+        write_json(self.batch/'manifest.json', manifest)
+        (self.batch/'results.jsonl').write_text('{}\n{}\n')
+        frozen = {'protocol': 'isolated-generation-v1', 'attempted': 2,
+                  'image_manifest_sha256': file_sha256(self.images)}
+        for name in ('manifest', 'predictions', 'results'):
+            suffix = '.json' if name == 'manifest' else '.jsonl'
+            frozen[name+'_sha256'] = file_sha256(self.batch/(name+suffix))
+        write_json(self.batch/'generation_frozen.json', frozen)
+
+    def test_separate_dataset_hash_and_frozen_submission(self):
+        self.freeze_isolated_batch()
+        with patch('boundary_repair.experiments.evaluation.run_process', side_effect=self.fake_process):
+            self.assertEqual(OfficialDockerEvaluator().evaluate(self.request).resolved, 1)
+
+    def test_changed_frozen_prediction_stops_before_harness(self):
+        self.freeze_isolated_batch()
+        self.predictions.write_text(self.predictions.read_text().replace('synthetic-diff', 'changed-diff'))
+        with patch('boundary_repair.experiments.evaluation.run_process') as launch:
+            with self.assertRaisesRegex(ValidationError, 'frozen_generation_artifact_changed'):
+                OfficialDockerEvaluator().evaluate(self.request)
+            launch.assert_not_called()
 
 if __name__=='__main__':
     unittest.main()

@@ -11,7 +11,7 @@ from boundary_repair.adapters.dataset import load_tasks, select_tasks
 from boundary_repair.adapters.storage import json_value
 from boundary_repair.bootstrap import build_pipeline, build_workspace
 from boundary_repair.config import load_config
-from boundary_repair.domain.errors import BoundaryRepairError, ImplementationRequired
+from boundary_repair.domain.errors import BoundaryRepairError, ConfigurationError, ImplementationRequired
 from boundary_repair.experiments.evaluation import OfficialDockerEvaluator, run_evaluation
 from boundary_repair.experiments.runner import run_generation
 
@@ -71,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
                 "model_mode": config.integration.model_mode, "workspace_mode": config.integration.workspace_mode,
             }
         elif args.command in {"inspect", "generate"}:
+            if args.command == "generate" and config.target == "server":
+                raise ConfigurationError("server_generation_requires_isolated_scripts/run_layers.py")
             tasks = select_tasks(load_tasks(config.dataset), repo=args.repo,
                                  instance_ids=tuple(args.instance_id), limit=args.limit)
             if args.command == "inspect":

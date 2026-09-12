@@ -48,6 +48,8 @@ class EvidenceClaim:
     source_ids: tuple[str, ...]
     targets: tuple["ObservationKey", ...] = ()
     description: str = ""
+    entry_cases: tuple["EntryCase", ...] = ()
+    binding_alternatives: tuple[tuple["EntryCase", ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,7 @@ class EvidenceBundle:
     sources: tuple[SourceRef, ...]
     claims: tuple[EvidenceClaim, ...]
     choice_groups: tuple[tuple[str, ...], ...] = ()
+    interpretation_groups: tuple[tuple[tuple[str, ...], ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +88,54 @@ class ObservationKey:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservationInterface:
+    """Program-owned observation with an explicit projection and declared entry domain."""
+    interface_id: str
+    site: SourceSpan
+    parameters: tuple[str, ...]
+    snapshot_sha256: str
+    kind: str = 'boolean_entry'
+    property_name: str = 'return'
+    input_sorts: tuple[tuple[str, str], ...] = ()
+    output_sort: str = 'boolean'
+    owner: SourceSpan | None = None
+    summary_key: str = ''
+    premises: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class EntryCase:
+    """An evidence-proposed entry case, separate from the original behavioral target."""
+    interface: ObservationInterface
+    inputs: tuple[tuple[str, Scalar], ...]
+    expected: Scalar
+
+    @property
+    def target(self) -> ObservationKey:
+        """Compile a source-distinct observation in declared parameter order."""
+        context = Term('and', tuple(Term('eq', (Term('symbol', value=name), Term('literal', value=value)))
+                                    for name, value in self.inputs))
+        entity = (self.interface.interface_id if self.interface.kind == 'local_projection'
+                  else self.interface.site.symbol)
+        return ObservationKey(entity, self.interface.property_name, context)
+
+    @property
+    def relation(self) -> Term:
+        """Compile a scalar output equality without interpreting natural-language literals."""
+        return Term('eq', (Term('symbol', value='return'), Term('literal', value=self.expected)))
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationScenario:
+    """Program-owned finite entry valuation; it supplies no desired output or UI reachability claim."""
+    scenario_id: str
+    interface: ObservationInterface
+    inputs: tuple[tuple[str, Scalar], ...]
+    conditions: tuple[Term, ...] = ()
+    provenance: str = 'declared_entry_source_literal_domain'
+
+
+@dataclass(frozen=True, slots=True)
 class Witness:
     """原始或经证明可达的情境；不能把臆造执行情境当作剪枝证明。"""
     witness_id: str
@@ -92,6 +143,8 @@ class Witness:
     assumptions: tuple[Term, ...]
     reachability: SolverStatus
     source_ids: tuple[str, ...]
+    interface: ObservationInterface | None = None
+    expected_values: tuple[Scalar, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +155,10 @@ class BehaviorConstraint:
     targets: tuple[ObservationKey, ...]
     relation: Term
     source_ids: tuple[str, ...]
+    description: str = ''
+    entry_cases: tuple[EntryCase, ...] = ()
+    binding_status: str = 'unbound'
+    binding_alternatives: tuple[tuple[EntryCase, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +170,11 @@ class ContractSet:
     witnesses: tuple[Witness, ...]
     theory: InterpretationSpace
     diagnostics: tuple[str, ...] = ()
+    extraction_status: str = 'partial'
+    interpretation_groups: tuple[tuple[tuple[str, ...], ...], ...] = ()
+    sources: tuple[SourceRef, ...] = ()
+    bindings: tuple[EntityBinding, ...] = ()
+    specification_policy: str = 'open_world'
 
 
 @dataclass(frozen=True, slots=True)

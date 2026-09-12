@@ -52,21 +52,97 @@ def evidence():
         guard = Term('and', (Term('eq', (S('active'), L(active))), Term('eq', (S('hidden'), L(hidden)))))
         claims.append({'claim_id': f'c{i}', 'kind': 'frame' if i == 2 else 'requirement', 'source_ids': [f's{i}'],
                        'description': lines[i], 'targets': [{'entity_id': 'shouldShow', 'property_name': 'return',
-                                                            'context': term_json(guard)}],
-                       'relation': term_json(Term('eq', (S('return'), L(expected))))})
+                                                            'context': term_json(guard, canonical=True)}],
+                       'relation': term_json(Term('eq', (S('return'), L(expected))), canonical=True)})
     return {'sources': sources, 'claims': claims, 'choice_groups': []}
 
 
+def anchored_evidence():
+    from boundary_repair.kernel.evidence import evidence_spans
+    data = evidence()
+    spans = evidence_spans(task(), ())
+    for source in data['sources']:
+        quote = source.pop('locator')
+        source['span_id'] = next(row['span_id'] for row in spans if quote in row['text'])
+    return data
+
+
+def structured_evidence():
+    """Project the same synthetic Boolean requirements into program-owned v3 references."""
+    from boundary_repair.kernel.evidence import evidence_catalog_v3
+    catalog = evidence_catalog_v3(task(), ())
+    result = {'observations': [], 'requirement_groups': [], 'frames': []}
+    for claim in evidence()['claims']:
+        ref = next(r['span_id'] for r in catalog['spans'] if claim['description'] in r['text'])
+        item = {'statement': claim['description'], 'evidence_refs': [{'span_id': ref}],
+                'targets': claim['targets'], 'formalization': claim['relation']}
+        if claim['kind'] == 'frame':
+            result['frames'].append(item)
+        else:
+            result['requirement_groups'].append({'alternatives': [{'all_of': [item]}]})
+    return result
+
+
+def aligned_evidence(prompt):
+    """Bind scripted direct-entry requirements to the actual request's interface catalogue."""
+    result = structured_evidence()
+    interface = next(item for item in prompt['observation_interfaces'] if item['site']['symbol'] == 'shouldShow')
+    code_ref = next(row['span_id'] for row in prompt['evidence_catalog']['spans']
+                    if row['kind'] == 'base_code' and row['path'] == interface['site']['path'])
+    claims = [group['alternatives'][0]['all_of'][0] for group in result['requirement_groups']] + result['frames']
+    for claim in claims:
+        values = claim['targets'][0]['context']['args']
+        claim['entry_cases'] = [{'interface_id': interface['interface_id'],
+                                 'inputs': [{'parameter': value['args'][0]['value'],
+                                             'value': value['args'][1]['value']} for value in values],
+                                 'expected': claim['formalization']['args'][1]['value']}]
+        claim['evidence_refs'].append({'span_id': code_ref})
+    return result
+
+
 def write_fixture(root):
+    from boundary_repair.adapters.program import ProgramAdapter
+    from boundary_repair.kernel.evidence import evidence_request_v6
+    from boundary_repair.kernel.retrieval import scope_snippets
+    source = root / 'source'
+    snap = RepositorySnapshot(source, 'a' * 40, tree_digest(source)) if source.exists() else snapshot(root)
+    program = ProgramAdapter(config(root))
+    ctx = context()
+    code = scope_snippets(program.source_scope(snap, ctx, task().problem_statement))
+    request = evidence_request_v6(task(), code, 8000, program.observation_interfaces(snap, ctx), program.observation_scenarios(snap, ctx))
     path = root / 'responses.json'
-    path.write_text(json.dumps({'responses': {'evidence.v1': evidence()}}), encoding='utf-8')
+    prompt = json.loads(request.prompt)
+    path.write_text(json.dumps({'responses': {'evidence.v6': catalogue_response(aligned_evidence(prompt), prompt)}}), encoding='utf-8')
     return path
+
+
+def catalogue_response(data, prompt):
+    """Encode an existing scripted fixture using frozen scenario IDs without adding evidence."""
+    from copy import deepcopy
+    result = deepcopy(data)
+    if 'scenario_catalog' not in prompt or not isinstance(result, dict) or 'requirement_groups' not in result:
+        return result
+    claims = result.get('observations', []) + [claim for group in result['requirement_groups']
+        for alternative in group['alternatives'] for claim in alternative['all_of']] + result.get('frames', [])
+    for claim in claims:
+        if 'binding_alternatives' in claim:
+            continue
+        cases = claim.pop('entry_cases', [])
+        associations = []
+        for case in cases:
+            inputs = {row['parameter']: row['value'] for row in case['inputs']}
+            scenario = next((s for s in prompt['scenario_catalog'] if s['interface_id'] == case['interface_id']
+                and json.dumps(s['inputs'], sort_keys=True) == json.dumps(inputs, sort_keys=True)), None)
+            associations.append({'scenario_id': scenario['scenario_id'] if scenario else 'invalid-scripted-context',
+                                 'expected': case['expected']})
+        claim['binding_alternatives'] = [{'cases': associations}] if associations else []
+    return result
 
 
 def snapshot(root):
     code = root / 'source'
     code.mkdir()
-    (code / 'ui.js').write_text(SOURCE, encoding='utf-8')
+    (code / 'ui.js').write_bytes(SOURCE.encode('utf-8'))
     return RepositorySnapshot(code, 'a' * 40, tree_digest(code))
 
 
@@ -77,7 +153,7 @@ def task(commit='a' * 40):
 def git_repo(root):
     repo = root / 'original'
     repo.mkdir()
-    (repo / 'ui.js').write_text(SOURCE, encoding='utf-8')
+    (repo / 'ui.js').write_bytes(SOURCE.encode('utf-8'))
     (repo / 'tests').mkdir()
     (repo / 'tests/gold.txt').write_text('should never enter snapshot', encoding='utf-8')
     (repo / '.env').write_text('SECRET=not_a_real_secret', encoding='utf-8')

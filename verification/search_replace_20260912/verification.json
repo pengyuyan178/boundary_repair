@@ -1,0 +1,7 @@
+{
+  "source_and_tests_match_docker": true,
+  "checked": 66,
+  "source_bundle_sha256": "9da7e5c83e60af17761950300f73260399c6f803f715f500fdb6f1bc2067a13d",
+  "model_calls": 0,
+  "benchmark_runs": 0
+}

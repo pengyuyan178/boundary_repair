@@ -8,8 +8,9 @@ from boundary_repair.domain.specification import (
     ObservationKey,
     Term,
     Witness,
+    Scalar,
 )
-from boundary_repair.domain.task import SourceSpan
+from boundary_repair.domain.task import SourceRef, SourceSpan
 
 
 class EditKind(StrEnum):
@@ -59,6 +60,31 @@ class LocalRepairModel:
     constraints: tuple[Term, ...]
     assumptions: ProofAssumptions
     coverage: Coverage
+    diagnostics: tuple[str, ...] = ()
+    allowed_outputs: tuple[tuple[Scalar, ...], ...] = ()
+    covered_obligations: tuple[str, ...] = ()
+    proof_scope: str = 'direct_boolean_entry'
+    grammar_literals: tuple[Scalar, ...] = ()
+    grammar_atoms: tuple[Term, ...] = ()
+    output_sort: str = 'boolean'
+    output_domain: tuple[Scalar, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class InterfaceCertificate:
+    """Replayable finite witness evidence and the precise source/grammar domain of an interface proof."""
+    witnesses: tuple[str, ...]
+    inputs: tuple[Term, ...]
+    allowed_outputs: tuple[tuple[Scalar, ...], ...]
+    output_domain: tuple[Scalar, ...]
+    assumptions: ProofAssumptions
+    snapshot_sha256: tuple[str, ...]
+    summary_keys: tuple[str, ...]
+    max_grammar_nodes: int = 9
+    boundary_id: str = ''
+    readable_features: tuple[str, ...] = ()
+    proof_scope: str = 'declared_entry_obligation_subset'
+    specification_policy: str = 'open_world'
 
 
 class ExpressivityVerdict(StrEnum):
@@ -76,6 +102,10 @@ class BoundaryAssessment:
     required_features: tuple[Feature, ...]
     certificate: str | None
     unresolved: tuple[str, ...] = ()
+    covered_obligations: tuple[str, ...] = ()
+    construction: str | None = None
+    proof_scope: str = 'direct_boolean_entry'
+    proof: InterfaceCertificate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,12 +116,26 @@ class LocalizationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundaryGuidance:
+    """A checked mapping from an analyzed interface to broader, program-owned edit targets."""
+    assessment: BoundaryAssessment
+    edit_targets: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SyntaxHole:
     """待补齐的语法空洞；限定位置、预期类型和可使用符号，避免自由改周边。"""
     hole_id: str
     site: SourceSpan
     expected_type: str
     allowed_symbols: tuple[str, ...]
+
+
+def edit_operations(expected_type: str) -> list[str]:
+    """Return the declared edit grammar for a local syntax site."""
+    if expected_type == 'consumer-branch':
+        return ['guard_consumer']
+    return ['replace', 'delete'] if expected_type == 'local:Statement' else ['replace']
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,13 +148,55 @@ class Effect:
 
 @dataclass(frozen=True, slots=True, order=True)
 class ScopeCost:
-    """词典序成本；未知义务与风险在 AST 大小之前，不靠缩短补丁掩盖风险。"""
+    """Pre-generation intervention coverage and permission risk, not discharged semantic obligations."""
+    uncovered_requirements: int
+    restricted_unknown_requirements: int
+    unmapped_requirements: int
+    touched_frames: int
+    unmapped_frames: int
+    unknown_effects: int
+    broad_operations: int
+    extra_edit_bytes: int
+    edit_bytes: int
+
+
+@dataclass(frozen=True, slots=True, order=True)
+class SemanticScopeCost:
+    """Lexicographic cost over declared behavior obligations and property-level effects."""
     unresolved_requirements: int
     unresolved_frames: int
     protected_risk: int
-    extra_scope: int
+    extra_properties: int
     invented_constants: int
-    ast_size: int
+    ast_nodes: int
+
+
+@dataclass(frozen=True, slots=True)
+class PlanSemantics:
+    """Static joint validation of planned constructions within the recorded projection domain."""
+    covered: tuple[str, ...] = ()
+    violated: tuple[str, ...] = ()
+    unresolved: tuple[str, ...] = ()
+    baseline_mismatches: tuple[str, ...] = ()
+    effects: tuple[Effect, ...] = ()
+    ast_nodes: int = 0
+    invented_constants: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PlanAssessment:
+    """Auditable alternatives scored before one selected plan is sent to generation."""
+    plan_id: str
+    boundary_ids: tuple[str, ...]
+    edit_targets: tuple[str, ...]
+    write_ranges: tuple[tuple[str, int, int], ...]
+    cost: ScopeCost
+    uncovered_requirements: tuple[str, ...]
+    unmapped_requirements: tuple[str, ...]
+    touched_frames: tuple[str, ...]
+    unmapped_frames: tuple[str, ...]
+    localization_rank: int
+    semantic_cost: SemanticScopeCost | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +211,18 @@ class PatchPlan:
     cost: ScopeCost | None = None
     unresolved: tuple[str, ...] = ()
     soft_obligations: tuple[BehaviorConstraint, ...] = ()
+    edit_scope: "EditScope | None" = None
+    generation_mode: str = 'certified'
+    interpretation_groups: tuple[tuple[tuple[str, ...], ...], ...] = ()
+    evidence_sources: tuple[SourceRef, ...] = ()
+    boundary_guidance: tuple[BoundaryGuidance, ...] | None = None
+    read_scope: "EditScope | None" = None
+    scope_comparison: tuple[PlanAssessment, ...] = ()
+    selection_policy: str = ''
+    semantic_cost: SemanticScopeCost | None = None
+    fixed_fillings: tuple['HoleFilling', ...] = ()
+    semantic_check: PlanSemantics | None = None
+    enforced_obligations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +230,7 @@ class HoleFilling:
     """模型/有限语法求解器提供的局部语法片段；后端还须类型与作用域校验。"""
     hole_id: str
     source_text: str
+    operation: str = 'replace'
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +241,77 @@ class PatchArtifact:
     plan_id: str
     unified_diff: str
     sha256: str
+    application_check: str = 'not_run'
+    syntax_check: str = 'unknown'
+    generation_mode: str = 'certified'
+    diagnostics: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class FileState:
+    """Immutable file identity and encoding for a declared editing scope."""
+    file_id: str
+    path: str
+    sha256: str
+    size: int
+    mode: int
+    encoding: str
+    complete: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EditRegion:
+    """A displayed contiguous source range, bound to original bytes and line numbers."""
+    region_id: str
+    file_id: str
+    path: str
+    start_byte: int
+    end_byte: int
+    start_line: int
+    source: str
+    sha256: str
+    start_char: int = 0
+    edit_mode: str = 'text'
+
+
+@dataclass(frozen=True, slots=True)
+class EditBlock:
+    """A complete syntax unit inside a displayed region, bound to original encoded bytes."""
+    block_id: str
+    region_id: str
+    start_byte: int
+    end_byte: int
+    sha256: str
+    node_kind: str
+    symbol: str = ''
+
+
+@dataclass(frozen=True, slots=True)
+class EditScope:
+    """Frozen multi-file write capabilities; read coverage is independent of semantic coverage."""
+    files: tuple[FileState, ...]
+    regions: tuple[EditRegion, ...]
+    creation_roots: tuple[str, ...]
+    diagnostics: tuple[str, ...] = ()
+    blocks: tuple[EditBlock, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SourceEdit:
+    """One declared operation on an original file or source range."""
+    operation: str
+    target: str
+    new_text: str = ''
+    first_line: int | None = None
+    last_line: int | None = None
+    destination: str = ''
+    old_text: str = ''
+
+
+@dataclass(frozen=True, slots=True)
+class EditTransaction:
+    """All edits are expressed against one base and are applied atomically."""
+    edits: tuple[SourceEdit, ...]
 
 
 @dataclass(frozen=True, slots=True)

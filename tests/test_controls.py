@@ -7,7 +7,8 @@ import sys
 from tempfile import TemporaryDirectory
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from helpers import config, context, evidence, parser_module, snapshot, task
+from helpers import catalogue_response, config, context, aligned_evidence, parser_module, snapshot, task
+from test_scoped_alignment import target_source
 from boundary_repair.adapters.logic import LogicAdapter
 from boundary_repair.adapters.program import ProgramAdapter
 from boundary_repair.algorithms.controls import PlainControls
@@ -25,11 +26,22 @@ class ModelDouble:
     """Fixed evidence and a known textual substitution test the integration, not model intelligence."""
     def complete(self, request, ctx):
         ctx.budget.begin_model_call(request.max_output_tokens)
-        if request.schema_name=='evidence.v1':
-            data=evidence()
+        if request.schema_name=='evidence.v6':
+            prompt=json.loads(request.prompt)
+            data=catalogue_response(aligned_evidence(prompt), prompt)
+        elif request.schema_name=='edits.v5':
+            prompt=json.loads(request.prompt)
+            block=next(b for b in prompt['blocks']
+                       if 'active || hidden' in target_source(prompt, b['block_id']))
+            source=target_source(prompt, block['block_id'])
+            data={'edits':[{'operation':'replace_block', 'target':block['block_id'],
+                            'old_text':'', 'destination':'',
+                            'new_text':source.replace('active || hidden','active && !hidden')}]}
         else:
             holes=json.loads(request.prompt)['holes']
-            data={'fillings':[{'hole_id':h['hole_id'],'source_text':h['old_source'].replace('active || hidden','active && !hidden')} for h in holes]}
+            data={'edits':[{'hole_id':h['hole_id'], 'operation':'replace', 'condition':None,
+                            'new_source':h['old_source'].replace('active || hidden','active && !hidden')}
+                           for h in holes if 'active || hidden' in h['old_source']]}
         text=json.dumps(data);ctx.budget.record_output_tokens(10)
         return ModelResponse(text,10,'model-double')
 
@@ -58,15 +70,17 @@ class ControlsTests(unittest.TestCase):
                 self.assertIn('diff --git',result.patch.unified_diff)
                 self.assertEqual([event.stage for event in trace.events if event.status=='completed'],
                                  ['specification','expressivity','synthesis'])
-                self.assertEqual(ctx.budget.model_calls,1 if use_spec and use_loc and use_synth else 2)
+                self.assertEqual(ctx.budget.model_calls,1 if use_synth else 2)
 
-    def test_plain_specs_do_not_create_must(self):
+    def test_plain_specs_keep_first_interpretation_as_explicit_assumptions(self):
         with TemporaryDirectory() as raw:
             root=Path(raw);snap=snapshot(root)
             result=PlainControls(ModelDouble(),ProgramAdapter(config(root))).recover(task(),snap,context())
-            self.assertFalse(result.must)
-            self.assertFalse(result.frames)
-            self.assertEqual(len(result.may),4)
+            self.assertEqual(len(result.must), 3)
+            self.assertEqual(len(result.frames), 1)
+            self.assertEqual(len(result.witnesses), 4)
+            self.assertEqual(result.specification_policy, 'first_sourced_interpretation')
+            self.assertEqual(result.theory.consistency.value, 'unknown')
 
 if __name__=='__main__':
     unittest.main()

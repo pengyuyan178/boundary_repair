@@ -93,6 +93,110 @@ class RemainingAdapterTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     prepare_asset(IssueAsset('https://images.example.com/a.png', 'image-1'), conf, context())
 
+    def test_asset_cache_reuses_bytes_and_rejects_corruption(self):
+        data = b'\x89PNG\r\n\x1a\nsynthetic'
+        with TemporaryDirectory() as temporary:
+            conf = config(Path(temporary), parser=False)
+            asset = IssueAsset('https://images.example.com/a.png?secret=not-for-logs', 'image-1')
+            with patch('boundary_repair.adapters.model._public_address', return_value='93.184.216.34'), \
+                 patch('boundary_repair.adapters.model.PinnedHTTPSConnection') as transport:
+                response = transport.return_value.getresponse.return_value
+                response.status, response.read.return_value, response.getheader.return_value = 200, data, 'image/png'
+                first = prepare_asset(asset, conf, context())
+                self.assertEqual(first, prepare_asset(asset, conf, context()))
+                transport.assert_called_once()
+                logs = list(conf.results_root.rglob('*.json'))
+                self.assertNotIn('not-for-logs', ''.join(p.read_text(encoding='utf-8') for p in logs))
+                binary = next(conf.results_root.rglob('*.bin'))
+                binary.write_bytes(b'corrupt')
+                with self.assertRaisesRegex(ValidationError, 'asset_cache_integrity_failed'):
+                    prepare_asset(asset, conf, context())
+                transport.assert_called_once()
+
+    def test_cache_metadata_cannot_change_mime_or_reference_missing_bytes(self):
+        data = b'\x89PNG\r\n\x1a\nsynthetic'
+        for missing in (False, True):
+            with self.subTest(missing=missing), TemporaryDirectory() as temporary:
+                conf = config(Path(temporary), parser=False)
+                asset = IssueAsset('https://images.example.com/a.png', 'image-1')
+                key = hashlib.sha256(asset.uri.encode()).hexdigest()
+                root = conf.results_root / 'synthetic' / 'cases' / 'demo__ui-1' / 'assets'
+                root.mkdir(parents=True)
+                (root / (key + '.json')).write_text(json.dumps({'sha256': hashlib.sha256(data).hexdigest(),
+                    'uri_sha256': key, 'bytes': len(data), 'mime': 'image/png' if missing else 'text/html'}))
+                if not missing:
+                    (root / (key + '.bin')).write_bytes(data)
+                with patch('boundary_repair.adapters.model._download_asset') as download:
+                    with self.assertRaisesRegex(ValidationError, 'asset_cache_integrity_failed'):
+                        prepare_asset(asset, conf, context())
+                    download.assert_not_called()
+
+    def test_transient_asset_failure_retries_and_records_cause(self):
+        data = b'\x89PNG\r\n\x1a\nsynthetic'
+        with TemporaryDirectory() as temporary:
+            conf = config(Path(temporary), parser=False)
+            with patch('boundary_repair.adapters.model._public_address', return_value='93.184.216.34'), \
+                 patch('boundary_repair.adapters.model.PinnedHTTPSConnection') as transport, \
+                 patch('boundary_repair.adapters.model.time.sleep') as sleep:
+                transport.return_value.request.side_effect = [TimeoutError('PRIVATE_MESSAGE'), None]
+                response = transport.return_value.getresponse.return_value
+                response.status, response.read.return_value, response.getheader.return_value = 200, data, 'image/png'
+                ctx = context()
+                prepare_asset(IssueAsset('https://images.example.com/a.png', 'image-1'), conf, ctx)
+                self.assertEqual(transport.call_count, 2)
+                self.assertEqual(ctx.budget.model_calls, 0)
+                sleep.assert_called_once_with(1)
+                log = json.loads(next(conf.results_root.rglob('*.attempts.json')).read_text(encoding='utf-8'))
+                self.assertEqual(log['attempts'][0]['cause_type'], 'TimeoutError')
+                self.assertNotIn('PRIVATE_MESSAGE', json.dumps(log))
+
+    def test_asset_retry_limit_is_finite(self):
+        with TemporaryDirectory() as temporary:
+            conf = config(Path(temporary), parser=False)
+            with patch('boundary_repair.adapters.model._public_address', return_value='93.184.216.34'), \
+                 patch('boundary_repair.adapters.model.PinnedHTTPSConnection') as transport, \
+                 patch('boundary_repair.adapters.model.time.sleep') as sleep:
+                transport.return_value.request.side_effect = ConnectionResetError('synthetic')
+                with self.assertRaises(ExternalServiceError):
+                    prepare_asset(IssueAsset('https://images.example.com/a.png', 'image-1'), conf, context())
+                self.assertEqual(transport.call_count, 3)
+                self.assertEqual(sleep.call_count, 2)
+
+    def test_certificate_failure_is_not_retried(self):
+        import ssl
+        with TemporaryDirectory() as temporary:
+            conf = config(Path(temporary), parser=False)
+            with patch('boundary_repair.adapters.model._public_address', return_value='93.184.216.34'), \
+                 patch('boundary_repair.adapters.model.PinnedHTTPSConnection') as transport, \
+                 patch('boundary_repair.adapters.model.time.sleep') as sleep:
+                transport.return_value.request.side_effect = ssl.SSLCertVerificationError('synthetic')
+                with self.assertRaises(ExternalServiceError):
+                    prepare_asset(IssueAsset('https://images.example.com/a.png', 'image-1'), conf, context())
+                transport.assert_called_once()
+                sleep.assert_not_called()
+
+    def test_asset_http_retry_policy_distinguishes_503_and_404(self):
+        for status, expected in ((503, 3), (404, 1), (302, 1)):
+            with self.subTest(status=status), TemporaryDirectory() as temporary:
+                conf = config(Path(temporary), parser=False)
+                with patch('boundary_repair.adapters.model._public_address', return_value='93.184.216.34'), \
+                     patch('boundary_repair.adapters.model.PinnedHTTPSConnection') as transport, \
+                     patch('boundary_repair.adapters.model.time.sleep'):
+                    transport.return_value.getresponse.return_value.status = status
+                    with self.assertRaises(ExternalServiceError):
+                        prepare_asset(IssueAsset('https://images.example.com/a.png', 'image-1'), conf, context())
+                    self.assertEqual(transport.call_count, expected)
+
+    def test_asset_deadline_prevents_any_network_call(self):
+        from boundary_repair.domain.errors import BudgetExceeded
+        with TemporaryDirectory() as temporary:
+            conf, ctx = config(Path(temporary), parser=False), context()
+            ctx.budget.started_at = -100000
+            with patch('boundary_repair.adapters.model._public_address') as dns:
+                with self.assertRaises(BudgetExceeded):
+                    prepare_asset(IssueAsset('https://images.example.com/a.png', 'image-1'), conf, ctx)
+                dns.assert_not_called()
+
     def test_evaluation_wrapper_builds_explicit_request_without_feedback(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

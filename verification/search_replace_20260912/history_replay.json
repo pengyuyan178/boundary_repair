@@ -1,0 +1,103 @@
+{
+  "replays": [
+    {
+      "instance_id": "markedjs__marked-1435",
+      "operation": "original",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "markedjs__marked-1435",
+      "operation": "search_replace_same_output",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "diegomura__react-pdf-433",
+      "operation": "original",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "diegomura__react-pdf-433",
+      "operation": "search_replace_same_output",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "chartjs__Chart.js-8710",
+      "operation": "original",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "chartjs__Chart.js-8710",
+      "operation": "search_replace_same_output",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "markedjs__marked-2483",
+      "operation": "original",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "markedjs__marked-2483",
+      "operation": "search_replace_same_output",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "Automattic__wp-calypso-26286",
+      "operation": "original",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "Automattic__wp-calypso-26286",
+      "operation": "search_replace_same_output",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "Automattic__wp-calypso-21648",
+      "operation": "original",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    },
+    {
+      "instance_id": "Automattic__wp-calypso-21648",
+      "operation": "search_replace_same_output",
+      "application": "matched",
+      "syntax": "rejected",
+      "source_unchanged": true,
+      "model_calls": 0
+    }
+  ],
+  "model_calls": 0,
+  "benchmark_runs": 0,
+  "note": "Historical rejection replay only; no corrected patch or repair-rate claim."
+}

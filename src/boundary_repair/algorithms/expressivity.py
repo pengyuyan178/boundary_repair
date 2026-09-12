@@ -1,14 +1,15 @@
 """Repair-interface expressivity: model-restricted certificates, never global file exclusion."""
 from dataclasses import dataclass, replace
 from itertools import combinations
-import hashlib
 
-from boundary_repair.domain.repair import BoundaryAssessment, Feature, ExpressivityVerdict, LocalRepairModel, LocalizationResult, RepairBoundary
+from boundary_repair.domain.repair import BoundaryAssessment, Feature, ExpressivityVerdict, InterfaceCertificate, LocalRepairModel, LocalizationResult, RepairBoundary
 from boundary_repair.domain.runtime import RunContext
 from boundary_repair.domain.specification import ContractSet, Coverage, SolverStatus, Term
 from boundary_repair.domain.task import RepositorySnapshot, TaskInput
 from boundary_repair.kernel.retrieval import candidate_boundaries
-from boundary_repair.kernel.terms import literal, literal_assignments, substitute, symbol, symbols
+from boundary_repair.kernel.terms import literal_assignments, substitute
+from boundary_repair.kernel.terms import symbols, typed_key
+from boundary_repair.kernel.boolean import synthesize_finite
 from boundary_repair.ports import LogicPort, ProgramPort
 
 
@@ -43,29 +44,62 @@ class ExpressivityLocalization:
         exclusion. Missing witnesses, projections or mappings downgrade the model to PARTIAL.
         """
         model = self.program.summarize(boundary, contracts.witnesses, snapshot, context)
+        if model.proof_scope == 'finite_source_projection':
+            cases = {f'{claim.constraint_id}:{number}': (claim, case)
+                     for claim in contracts.must + contracts.frames for number, case in enumerate(claim.entry_cases)}
+            valid = True
+            for witness in contracts.witnesses:
+                if witness.interface is None or witness.interface.kind != 'local_projection':
+                    continue
+                obligation = cases.get(witness.witness_id)
+                if obligation is None:
+                    valid = False
+                    continue
+                claim, case = obligation
+                if (witness.interface != case.interface or witness.observations != (case.target,)
+                        or witness.source_ids != claim.source_ids or len(witness.expected_values) != 1
+                        or typed_key(witness.expected_values[0]) != typed_key(case.expected)):
+                    valid = False
+            remaining = tuple('uncovered_entry_case:' + f'{claim.constraint_id}:{number}'
+                              for claim in contracts.must + contracts.frames
+                              for number, case in enumerate(claim.entry_cases)
+                              if f'{claim.constraint_id}:{number}' not in model.covered_obligations)
+            remaining += tuple('unbound_hard_constraint:' + claim.constraint_id
+                               for claim in contracts.must + contracts.frames if not claim.entry_cases)
+            return replace(model, diagnostics=model.diagnostics + remaining + (() if valid else ('projection_witness_obligation_mismatch',)),
+                           coverage=model.coverage if valid else Coverage.PARTIAL)
         constraints = list(model.constraints)
         covered = set()
+        allowed = []
         reliable = model.coverage == Coverage.COMPLETE
+        obligations = {f'{claim.constraint_id}:{number}': (claim, case)
+                       for claim in contracts.must + contracts.frames
+                       for number, case in enumerate(claim.entry_cases)}
         for index, witness in enumerate(model.witnesses):
-            targets = witness.observations
-            assignments = literal_assignments(targets[0].context) if len(targets) == 1 else None
-            if assignments is None:
+            obligation = obligations.get(witness.witness_id)
+            if obligation is None:
                 reliable = False
                 continue
-            for claim in contracts.must + contracts.frames:
-                if not targets or targets[0] not in claim.targets:
-                    continue
-                replacements = {name: literal(value) for name, value in assignments.items()}
-                replacements.update({'return': model.output_terms[index], 'base:return': symbol(f'base_out:{index}')})
-                relation = substitute(claim.relation, replacements)
-                if set(symbols(relation)) - {f'local_out:{index}', f'base_out:{index}'}:
-                    reliable = False
-                    continue
-                constraints.append(relation)
-                covered.add(claim.constraint_id)
-        if {c.constraint_id for c in contracts.must + contracts.frames} - covered:
+            claim, case = obligation
+            if (witness.interface != case.interface or witness.observations != (case.target,)
+                    or not claim.source_ids or witness.source_ids != claim.source_ids):
+                reliable = False
+                continue
+            relation = substitute(case.relation, {'return': model.output_terms[index]})
+            constraints.append(relation)
+            covered.add(witness.witness_id)
+            allowed.append((case.expected,))
+        relevant = {key for key, (_, case) in obligations.items()
+                    if any(case.interface.site.path == site.path and case.interface.site.start_byte == site.start_byte
+                           and case.interface.site.end_byte == site.end_byte for site in boundary.sites)}
+        if relevant - covered:
             reliable = False
-        return replace(model, constraints=tuple(constraints), coverage=Coverage.COMPLETE if reliable else Coverage.PARTIAL)
+        diagnostics = tuple('unbound_hard_constraint:' + claim.constraint_id
+                            for claim in contracts.must + contracts.frames if not claim.entry_cases)
+        diagnostics += tuple('uncovered_entry_case:' + key for key in sorted(set(obligations) - covered))
+        return replace(model, constraints=tuple(constraints), coverage=Coverage.COMPLETE if reliable else Coverage.PARTIAL,
+                       diagnostics=model.diagnostics + diagnostics,
+                       allowed_outputs=tuple(allowed), covered_obligations=tuple(sorted(covered)))
 
     def assess_expressivity(self, model: LocalRepairModel, contracts: ContractSet,
                             context: RunContext) -> BoundaryAssessment:
@@ -76,7 +110,7 @@ class ExpressivityLocalization:
         if model.coverage != Coverage.COMPLETE or missing or not model.witnesses:
             return BoundaryAssessment(model.boundary, ExpressivityVerdict.UNKNOWN,
                                       model.boundary.readable_features, None,
-                                      missing + ('unsupported_or_partial_local_semantics',))
+                                      missing + model.diagnostics + ('unsupported_or_partial_local_semantics',))
         answer = self.logic.check(model.constraints, context)
         if answer.status == SolverStatus.UNKNOWN:
             return BoundaryAssessment(model.boundary, ExpressivityVerdict.UNKNOWN,
@@ -85,10 +119,52 @@ class ExpressivityLocalization:
         source_version = '|'.join(span.content_sha256 for span in model.boundary.sites)
         certificate = f'entry-boolean:{model.boundary.boundary_id}:{source_version}:{answer.certificate}'
         required = model.boundary.readable_features
+        if model.proof_scope == 'finite_source_projection':
+            construction = None
+            if verdict == ExpressivityVerdict.FEASIBLE:
+                cases = tuple((literal_assignments(term), allowed) for term, allowed in zip(model.input_terms, model.allowed_outputs))
+                expression = synthesize_finite(tuple(f.feature_id for f in required), cases, model.grammar_atoms,
+                                              model.grammar_literals, model.output_sort, context)
+                if expression is None:
+                    return BoundaryAssessment(model.boundary, ExpressivityVerdict.UNKNOWN, required, None,
+                        model.diagnostics + ('finite_grammar_realization_not_found',), model.covered_obligations,
+                        proof_scope=model.proof_scope)
+                construction = expression.source
+                required = tuple(f for f in required if f.feature_id in symbols(expression.term))
+            proof = InterfaceCertificate(model.covered_obligations, model.input_terms, model.allowed_outputs,
+                model.output_domain, model.assumptions,
+                tuple(dict.fromkeys(w.interface.snapshot_sha256 for w in model.witnesses)),
+                tuple(dict.fromkeys(w.interface.summary_key for w in model.witnesses)),
+                boundary_id=model.boundary.boundary_id,
+                readable_features=tuple(f.feature_id for f in model.boundary.readable_features),
+                specification_policy=contracts.specification_policy)
+            certificate = f'projection-v1:{model.boundary.boundary_id}:{source_version}:{answer.certificate}'
+            return BoundaryAssessment(model.boundary, verdict, required, certificate,
+                model.diagnostics + ('proof_scope:declared_entry_and_source_projection',
+                                     'entry_case_evidence_interpretation_not_verified',
+                                     'whole_UI_reachability_and_unobserved_effects_unproved'),
+                model.covered_obligations, construction, model.proof_scope, proof)
         if verdict == ExpressivityVerdict.FEASIBLE and len(required) <= 8:
             required = self.minimum_features(model, context)
+        construction = None
+        if verdict == ExpressivityVerdict.FEASIBLE:
+            cases = tuple((literal_assignments(term), allowed) for term, allowed in zip(model.input_terms, model.allowed_outputs))
+            expression = synthesize_finite(tuple(f.feature_id for f in required), cases, model.grammar_atoms,
+                                          model.grammar_literals, 'boolean', context)
+            if expression is None:
+                return BoundaryAssessment(model.boundary, ExpressivityVerdict.UNKNOWN, required, None,
+                    model.diagnostics + ('finite_grammar_realization_not_found',), model.covered_obligations)
+            construction = expression.source
+        proof = InterfaceCertificate(model.covered_obligations, model.input_terms, model.allowed_outputs,
+            model.output_domain, model.assumptions,
+            tuple(dict.fromkeys(w.interface.snapshot_sha256 for w in model.witnesses)), (),
+            boundary_id=model.boundary.boundary_id,
+            readable_features=tuple(f.feature_id for f in model.boundary.readable_features),
+            specification_policy=contracts.specification_policy)
         return BoundaryAssessment(model.boundary, verdict, required, certificate,
-                                  ('proof_scope:direct_boolean_function_entry_not_UI_reachability',))
+                                  model.diagnostics + ('proof_scope:direct_boolean_function_entry_not_UI_reachability',
+                                   'entry_case_evidence_interpretation_not_verified'), model.covered_obligations,
+                                   construction, model.proof_scope, proof)
 
     def minimum_features(self, model: LocalRepairModel, context: RunContext) -> tuple[Feature, ...]:
         """Find a smallest read subset by adding equal-output constraints for input collisions.

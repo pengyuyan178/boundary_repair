@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from helpers import config, context
 from boundary_repair.adapters.model import FrozenModelAdapter, chat_endpoint, read_model_environment, _public_address
 from boundary_repair.domain.errors import ConfigurationError, ExternalServiceError, ValidationError
+from boundary_repair.domain.task import IssueAsset
+from boundary_repair.kernel.codec import strict_json
 from boundary_repair.ports import ModelRequest
 
 
@@ -46,6 +48,47 @@ class ModelHTTPTests(unittest.TestCase):
         self.config = replace(self.config, integration=replace(self.config.integration, allow_local_http=True))
         self.request = ModelRequest('Return JSON only.', 'A synthetic request', (), 'test.v1', 32)
 
+    def test_structured_schema_is_sent_without_silent_fallback(self):
+        from boundary_repair.kernel.evidence import evidence_request
+        from helpers import task
+        request = evidence_request(task(), (), 200)
+        FrozenModelAdapter(self.config).complete(request, context())
+        sent = self.calls[0][1]['response_format']
+        self.assertEqual(sent['type'], 'json_schema')
+        self.assertTrue(sent['json_schema']['strict'])
+        self.assertEqual(sent['json_schema']['schema'], request.output_schema)
+
+    def test_structured_output_rejection_stops_after_one_request(self):
+        from boundary_repair.kernel.evidence import evidence_request
+        from helpers import task
+        self.http_status = 400
+        self.payload = {'error': {'code': 'invalid_json_schema', 'param': 'response_format'}}
+        ctx = context()
+        with self.assertRaisesRegex(ConfigurationError, 'model_request_rejected:400:json_schema'):
+            FrozenModelAdapter(self.config).complete(evidence_request(task(), (), 200), ctx)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(ctx.budget.model_calls, 1)
+
+    def test_task_specific_400_is_not_a_batch_configuration_failure(self):
+        self.http_status = 400
+        self.payload = {'error': {'code': 'context_length_exceeded', 'param': 'messages'}}
+        with self.assertRaisesRegex(ExternalServiceError, 'model_http_status:400'):
+            FrozenModelAdapter(self.config).complete(self.request, context())
+        self.assertEqual(len(self.calls), 1)
+
+    def test_json_mode_requires_explicit_configuration(self):
+        from boundary_repair.kernel.evidence import evidence_request
+        from helpers import task
+        conf = replace(self.config, integration=replace(self.config.integration, response_format='json_object'))
+        FrozenModelAdapter(conf).complete(evidence_request(task(), (), 200), context())
+        self.assertEqual(self.calls[0][1]['response_format'], {'type': 'json_object'})
+
+    def test_missing_new_protocol_schema_fails_before_model_call(self):
+        request = replace(self.request, schema_name='evidence.v2')
+        with self.assertRaisesRegex(ConfigurationError, 'output_schema_missing'):
+            FrozenModelAdapter(self.config).complete(request, context())
+        self.assertFalse(self.calls)
+
     def test_actual_http_serialization_usage_and_seed(self):
         ctx = context()
         result = FrozenModelAdapter(self.config).complete(self.request, ctx)
@@ -65,6 +108,43 @@ class ModelHTTPTests(unittest.TestCase):
             FrozenModelAdapter(self.config).complete(self.request, ctx)
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(ctx.budget.model_calls, 1)
+
+    def test_service_failure_records_bounded_redacted_cause_without_retry(self):
+        self.http_status = 503
+        self.payload = {'error': {'message': 'upstream unavailable local-dummy Bearer another-secret ' + 'x' * 20000}}
+        ctx = context()
+        with self.assertRaisesRegex(ExternalServiceError, '503'):
+            FrozenModelAdapter(self.config).complete(self.request, ctx)
+        trajectory = self.config.results_root / ctx.run_id / 'cases' / ctx.instance_id / 'trajectory'
+        record = json.loads(next(trajectory.glob('*.error.json')).read_text())
+        self.assertEqual(record['http_status'], 503)
+        self.assertTrue(record['response_truncated'])
+        self.assertLessEqual(len(record['response_excerpt']), 2048)
+        self.assertNotIn('local-dummy', json.dumps(record))
+        self.assertNotIn('another-secret', json.dumps(record))
+        self.assertIn('upstream unavailable', record['response_excerpt'])
+        self.assertEqual((len(self.calls), ctx.budget.model_calls), (1, 1))
+
+    def test_raw_content_is_saved_before_domain_json_validation(self):
+        self.payload['choices'][0]['message']['content'] = '{invalid-json'
+        ctx = context()
+        result = FrozenModelAdapter(self.config).complete(self.request, ctx)
+        with self.assertRaises(ValidationError):
+            strict_json(result.text)
+        trajectory = self.config.results_root / ctx.run_id / 'cases' / ctx.instance_id / 'trajectory'
+        saved = json.loads((trajectory / '001_test.v1.response.json').read_text())
+        self.assertEqual(saved['choices'][0]['text'], '{invalid-json')
+        self.assertEqual(saved['usage']['completion_tokens'], 7)
+        self.assertTrue((trajectory / '001_test.v1.request.json').is_file())
+        self.assertNotIn('local-dummy', ''.join(p.read_text() for p in trajectory.iterdir()))
+
+    def test_each_image_is_preceded_by_its_exact_asset_id(self):
+        request = replace(self.request, assets=(IssueAsset('https://example.invalid/a.png', 'issue-image-3'),))
+        with patch('boundary_repair.adapters.model.prepare_asset', return_value=('data:image/png;base64,AA==', 'a'*64)):
+            FrozenModelAdapter(self.config).complete(request, context())
+        content = self.calls[0][1]['messages'][1]['content']
+        self.assertEqual(content[1], {'type': 'text', 'text': 'Image asset source_id: issue-image-3'})
+        self.assertEqual(content[2]['type'], 'image_url')
 
     def test_missing_usage_charges_reservation_and_fails(self):
         del self.payload['usage']

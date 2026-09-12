@@ -66,3 +66,4 @@ class ProgramIndex:
     locations: tuple[SourceSpan, ...]
     unsupported_constructs: tuple[str, ...] = ()
     read_interfaces: tuple[tuple[SourceSpan, tuple[str, ...]], ...] = ()
+    local_interfaces: tuple[tuple[SourceSpan, tuple[str, ...], str], ...] = ()
